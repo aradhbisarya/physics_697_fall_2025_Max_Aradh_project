@@ -10,6 +10,11 @@ function l(n, c)
     return ((n-1)*F*C) + c - 1
 end
 
+function addOp(arr, op, site)
+    push!(arr, op)
+    push!(arr, site)
+end
+
 let 
     sites = siteinds("S=1/2", (N*F*C))
 
@@ -17,8 +22,10 @@ let
     Mass = AutoMPO()
     for n=1: N 
         i = isodd(n) ? -1 : 1
+        coeff = 0.5*m*i
         for c=1: C
-            Mass += 0.5*m*i, "Z", l(n, c) + 1
+            Mass += coeff, "Z", l(n, c) + 1
+            Mass += coeff, "Id", l(n, c) + 1
         end
     end
 
@@ -30,17 +37,27 @@ let
                 s1 = l(n+1, c)
                 s2 = l(n, c)
                 if i==1
-                    Hopping += "S+", s1 + 1
-                    for k=s1 : s2 - 1
-                        Hopping += -1, "Z", k + 1
-                    end
-                     Hopping += "S-", s2 + 1
-                else
-                    Hopping += "S+", s2 + 1
+                    temp = []
+                    coeff = 1
+                    addOp(temp, "S+", s1 + 1)
                     for k=s2 : s1 - 1
-                        Hopping += -1, "Z", k + 1
+                        coeff *= -1
+                        addOp(temp, "Z", k + 1)
                     end
-                     Hopping += "S-", s1 + 1
+                    addOp(temp, "S-", s2 + 1)
+                    pushfirst!(temp, coeff)
+                    Hopping += tuple(temp...)
+                else
+                    temp = []
+                    coeff = 1
+                    addOp(temp, "S+", s2 + 1)
+                    for k=s2 : s1 - 1
+                        coeff *= -1
+                        addOp(temp, "Z", k + 1)
+                    end
+                    addOp(temp, "S-", s1 + 1)
+                    pushfirst!(temp, coeff)
+                    Hopping += tuple(temp...)
                 end
             end
         end
