@@ -1,10 +1,8 @@
 using ITensors, ITensorMPS
 using Plots
 
-m = 2
-w = 1
-J = 1
-N = 3
+
+N = 42
 F = 1
 C = 3
 
@@ -99,23 +97,20 @@ function Q_n_m(coeff,n,m)
     return H
 end
 
-function number_operator(psi)
+function number_operator(psi,w,n)
     
     Num = AutoMPO()
-    for n=1:N
-        for c=1:C
-            Num += w/2, "Sz", l(2*n, c) + 1
-            Num += -w/2, "Sz", l(2*n-1, c) + 1
-        end
+    for c=1:C
+        Num += w/2, "Sz", l(2*n, c) + 1
+        Num += w/2, "Sz", l(2*n-1, c) + 1
     end
     # Calculate the expectation value of the operator with respect to the MPS
-    expectation_val = inner(psi', toMPO(Num), psi)
+    expectation_val = inner(psi', MPO(Num, siteinds(psi)), psi)
     # Print the result
-    println("Expectation value: ", expectation_val)
     return expectation_val
 end
 
-let 
+function Hamiltonian(m, w, J)
     #Mass
     Mass = AutoMPO()
     for n=1: N 
@@ -175,23 +170,42 @@ let
     
         end
     end
-
+    return Hopping + Mass + Electric
+end
+let
+    m = 2
+    w = 1
+    J = 1
 
     sites = siteinds("S=1/2", N*F*C)
     psi0 = random_mps(sites)
-
-    H = MPO(Hopping + Mass + Electric  , sites)
+    
+    H = MPO(Hamiltonian(m, w, J), sites)
         
     nsweeps = 5 # number of sweeps is 5
     maxdim = [10,20,100,100,200] # gradually increase states kept
     cutoff = [1E-10] # desired truncation error
 
-    psi0 = random_mps(sites;linkdims=2)
+    psir = random_mps(sites;linkdims=2)
 
-    energy,psi = dmrg(H,psi0;nsweeps,maxdim,cutoff)
+    energy,psi0 = dmrg(H,psir;nsweeps,maxdim,cutoff)
 
     print(energy)
+    create_fermion = AutoMPO()
+    create_fermion += 1, "S+", l(div(N,2), 1) + 1
 
-    number_operator(psi)
 
+    energy, psi = dmrg(H,psi0;nsweeps,maxdim,cutoff)
+
+    number_random = []
+    number_initial = []
+    number_final =[]
+    for n=1:div(N,2)
+        push!(number_random, number_operator(psir,w,n))
+        push!(number_initial, number_operator(psi0,w,n))
+        push!(number_final, number_operator(psi,w,n))
+    end
+    println("Random number operator values: ", number_random)
+    println("Initial number operator values: ", number_initial)
+    println("Final number operator values: ", number_final)
 end

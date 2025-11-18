@@ -162,6 +162,11 @@ let
         return Electric
     end
 
+    println(Hopping())
+    println("------------------")
+    println(Mass())
+    println("------------------")
+    println(Electric())
     H = +(Hopping() + Mass() + Electric())
 
     nsweeps = 5 # number of sweeps is 5
