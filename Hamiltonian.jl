@@ -2,7 +2,7 @@ using ITensors, ITensorMPS
 using Plots
 
 
-N = 42
+N = 20
 F = 1
 C = 3
 
@@ -110,6 +110,7 @@ function number_operator(psi,w,n)
     return expectation_val
 end
 
+
 function Hamiltonian(m, w, J)
     #Mass
     Mass = AutoMPO()
@@ -160,13 +161,13 @@ function Hamiltonian(m, w, J)
     Electric = AutoMPO()
     for n=1: N-1
         println("Adding Q($n, $n)")
-        Electric += Q_n_m(J*(N*F*C-n),n,n)
+        Electric += Q_n_m(J*(N-n),n,n)
     end
 
     for n=1: N-2
         for m=n+1: N-1
             println("Adding Q($n, $m)")
-            Electric += Q_n_m(2*J*(N*F*C-m),n,m)
+            Electric += Q_n_m(2*J*(N-m),n,m)
     
         end
     end
@@ -180,20 +181,28 @@ let
     sites = siteinds("S=1/2", N*F*C)
     psi0 = random_mps(sites)
     
-    H = MPO(Hamiltonian(m, w, J), sites)
-        
-    nsweeps = 5 # number of sweeps is 5
+    
+    flux_penalty = AutoMPO()
+    for n=1: N-1
+        for m=1: N-1
+            flux_penalty += Q_n_m(10000,n,m)
+        end
+    end
+    H = MPO(Hamiltonian(m, w, J) + flux_penalty, sites)
+
+    nsweeps = 100 # number of sweeps is 5
     maxdim = [10,20,100,100,200] # gradually increase states kept
     cutoff = [1E-10] # desired truncation error
 
     psir = random_mps(sites;linkdims=2)
 
-    energy,psi0 = dmrg(H,psir;nsweeps,maxdim,cutoff)
+    # energy,psi0 = dmrg(H,psir;nsweeps,maxdim,cutoff)
 
-    print(energy)
-    create_fermion = AutoMPO()
-    create_fermion += 1, "S+", l(div(N,2), 1) + 1
+    # print(energy)
+    # create_fermion = AutoMPO()
+    # create_fermion += 1, "S+", l(div(N,2), 1) + 1
 
+    psi0 = random_mps(sites;linkdims=2)
 
     energy, psi = dmrg(H,psi0;nsweeps,maxdim,cutoff)
 
