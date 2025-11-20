@@ -259,7 +259,7 @@ let
 
     H = MPO(Hopping + Mass + Electric + Flux, sites)
 
-    nsweeps = 500 # number of sweeps is 5
+    nsweeps = 50 # number of sweeps is 5
     maxdim = [10,20,100,100,200] # gradually increase states kept
     cutoff = [1E-10] # desired truncation error
 
@@ -267,7 +267,18 @@ let
 
     energy,psi = dmrg(H,psi0;nsweeps,maxdim,cutoff)
 
-    print(energy)
+    
+
+    wfs = [psi0]
+
+    energy1, psi1 = dmrg(H, wfs, random_mps(sites;linkdims=2); nsweeps, cutoff, weight= 20.0)
+
+    print("Ground State Energy = ")
+    println(energy)
+    print("Excited State Energy = ")
+    println(energy1)
+    print("Energy Gap = ")
+    println(energy1 - energy)
 
     #plot_observables(psi, N, F, C)
 
