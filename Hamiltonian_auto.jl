@@ -3,7 +3,7 @@ using Plots
 
 m = 2
 w = 1
-N = 20
+N = 10
 F = 1
 C = 3
 J = 1
@@ -259,13 +259,13 @@ let
 
     H = MPO(Hopping + Mass + Electric + Flux, sites)
 
-    nsweeps = 50 # number of sweeps is 5
+    nsweeps = 20 # number of sweeps is 5
     maxdim = [10,20,100,100,200] # gradually increase states kept
     cutoff = [1E-10] # desired truncation error
 
-    psi0 = random_mps(sites;linkdims=2)
+    psi = random_mps(sites;linkdims=2)
 
-    energy,psi = dmrg(H,psi0;nsweeps,maxdim,cutoff)
+    energy,psi0 = dmrg(H,psi;nsweeps,maxdim,cutoff)
 
     
 
@@ -290,8 +290,14 @@ let
         push!(ret, number_op(psi0, w, n))
     end
 
+    ret2 = []
+    for n=1: div(N,2)
+        push!(ret2, number_op(psi0, w, n))
+    end
+
     p = plot(title="Number operator vaules for Random and Minimized states", xlabel="Site", ylabel="Number operator value")
-    plot!(p, ret, label="Minimized")
+    plot!(p, ret, label="zero")
+    plot!(p, ret2, label+"one")
     display(p)
 
 end
