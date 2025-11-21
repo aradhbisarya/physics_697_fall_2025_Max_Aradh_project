@@ -297,7 +297,7 @@ let
 
     p = plot(title="Number operator vaules for Random and Minimized states", xlabel="Site", ylabel="Number operator value")
     plot!(p, ret, label="zero")
-    plot!(p, ret2, label+"one")
+    plot!(p, ret2, label="one")
     display(p)
 
 end
