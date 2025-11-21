@@ -3,7 +3,7 @@ using Plots
 
 m = 2
 w = 1
-N = 10
+N = 6
 F = 1
 C = 3
 J = 1
@@ -292,7 +292,7 @@ let
 
     ret2 = []
     for n=1: div(N,2)
-        push!(ret2, number_op(psi0, w, n))
+        push!(ret2, number_op(psi1, w, n))
     end
 
     p = plot(title="Number operator vaules for Random and Minimized states", xlabel="Site", ylabel="Number operator value")
