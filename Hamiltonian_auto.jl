@@ -1,12 +1,15 @@
 using ITensors, ITensorMPS
 using Plots
 
-m = 2
-w = 1
-N = 6
+m0 = 2
+g = 1
+a = 1
+w = 1/(2*a*g)
+N = 10
 F = 1
 C = 3
-J = 1
+J = (a*g) / 2
+m = m0 / g
 L = 10000
 sites = siteinds("S=1/2", (N*F*C))
 
@@ -180,7 +183,20 @@ function number_op(psi, w, n)
     return inner(psi', MPO(num, siteinds(psi)), psi)
 end
 
-let 
+function phase_diagram(steps)
+    for i=1 : steps
+        #todo
+    end
+end
+
+function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
+    N = NNew
+    F = FNew   
+    C = CNew
+    m0 = m0New
+    a = aNew
+    g = gNew
+
     #Mass
     Mass = AutoMPO()
     for n=1: N 
@@ -257,9 +273,12 @@ let
         end
     end
 
-    H = MPO(Hopping + Mass + Electric + Flux, sites)
+    return MPO(Hopping + Mass + Electric + Flux, sites)
+end
 
-    nsweeps = 20 # number of sweeps is 5
+let 
+    H = construct_hamiltonian(N, F, C, m0, a, g)
+    nsweeps = 5 # number of sweeps is 5
     maxdim = [10,20,100,100,200] # gradually increase states kept
     cutoff = [1E-10] # desired truncation error
 
