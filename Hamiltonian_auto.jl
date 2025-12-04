@@ -1,11 +1,12 @@
 using ITensors, ITensorMPS
 using Plots
+using Printf
 
 m0 = 2
 g = 1
-a = 1
-w = 1/(2*a*g)
 N = 10
+a = 1/N
+w = 1/(2*a*g)
 F = 1
 C = 3
 J = (a*g) / 2
@@ -65,8 +66,8 @@ function QiiN(n, i, coeff)
     for f=1: F
         coeff *= (1/(2*sqrt(2i*(i -1))))
         for c=1 : i - 1
-            push!(ret, (coeff, "Z", l(n, f, c) + 1))
-            push!(ret, (-1 * coeff, "Z", l(n, f, i) + 1))
+            push!(ret, (coeff, "Sz", l(n, f, c) + 1))
+            push!(ret, (-1 * coeff, "Sz", l(n, f, i) + 1))
         end
     end
     return ret
@@ -77,7 +78,7 @@ function BigLambda(n, f, i, j)
     coeff = 1
     for k=l(n, f, j) : l(n, f, i) - 1
         coeff *= -1
-        addOp!(ret, "Z", k + 1)
+        addOp!(ret, "Sz", k + 1)
     end
     pushfirst!(ret, coeff)
     return ret
@@ -184,9 +185,43 @@ function number_op(psi, w, n)
 end
 
 function phase_diagram(steps)
+    M = zeros(steps, steps)
+    mass = -1
+    coupling = 0
+    mass_step = 2/steps
+    coupling_step = 1/steps
     for i=1 : steps
-        #todo
+        for j=1 : steps
+            @printf("step %10d", i + j)
+            print("/")
+            @printf("%10d\n", steps * steps)
+            H = construct_hamiltonian(N, F, C, mass, a, coupling)
+            nsweeps = 15 # number of sweeps is 5
+            maxdim = [10,20,100,100,200] # gradually increase states kept
+            cutoff = [1E-10] # desired truncation error
+
+            psi = random_mps(sites;linkdims=2)
+
+            energy,psi0 = dmrg(H,psi;nsweeps,maxdim,cutoff)
+            wfs = [psi0]
+
+            energy1, psi1 = dmrg(H, wfs, random_mps(sites;linkdims=2); nsweeps, cutoff, weight= 20.0)
+
+            M[i, j] = energy1 - energy
+
+            coupling += coupling_step
+        end
+        mass += mass_step
     end
+
+    hm = heatmap(M, 
+        title="Phase Diagram (Ground State)", 
+        xlabel="Mass -1 to 1", 
+        ylabel="Coupling 0 to 1",
+        color=:viridis,
+        aspect_ratio=:equal
+    )
+    display(hm)
 end
 
 function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
@@ -196,6 +231,9 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
     m0 = m0New
     a = aNew
     g = gNew
+    m - m0/g
+    w = 1/(2*a*g)
+    J = (a*g) / 2
 
     #Mass
     Mass = AutoMPO()
@@ -277,46 +315,47 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
 end
 
 let 
-    H = construct_hamiltonian(N, F, C, m0, a, g)
-    nsweeps = 5 # number of sweeps is 5
-    maxdim = [10,20,100,100,200] # gradually increase states kept
-    cutoff = [1E-10] # desired truncation error
+    phase_diagram(25)
+    # H = construct_hamiltonian(N, F, C, m0, a, g)
+    # nsweeps = 5 # number of sweeps is 5
+    # maxdim = [10,20,100,100,200] # gradually increase states kept
+    # cutoff = [1E-10] # desired truncation error
 
-    psi = random_mps(sites;linkdims=2)
+    # psi = random_mps(sites;linkdims=2)
 
-    energy,psi0 = dmrg(H,psi;nsweeps,maxdim,cutoff)
+    # energy,psi0 = dmrg(H,psi;nsweeps,maxdim,cutoff)
 
     
 
-    wfs = [psi0]
+    # wfs = [psi0]
 
-    energy1, psi1 = dmrg(H, wfs, random_mps(sites;linkdims=2); nsweeps, cutoff, weight= 20.0)
+    # energy1, psi1 = dmrg(H, wfs, random_mps(sites;linkdims=2); nsweeps, cutoff, weight= 20.0)
 
-    print("Ground State Energy = ")
-    println(energy)
-    print("Excited State Energy = ")
-    println(energy1)
-    print("Energy Gap = ")
-    println(energy1 - energy)
+    # print("Ground State Energy = ")
+    # println(energy)
+    # print("Excited State Energy = ")
+    # println(energy1)
+    # print("Energy Gap = ")
+    # println(energy1 - energy)
 
-    #plot_observables(psi, N, F, C)
+    # #plot_observables(psi, N, F, C)
 
-    #plot_correlations(psi)
+    # #plot_correlations(psi)
 
-    #plot_entanglement(psi, N*F*C)
-    ret = []
-    for n=1: div(N,2)
-        push!(ret, number_op(psi0, w, n))
-    end
+    # #plot_entanglement(psi, N*F*C)
+    # ret = []
+    # for n=1: div(N,2)
+    #     push!(ret, number_op(psi0, w, n))
+    # end
 
-    ret2 = []
-    for n=1: div(N,2)
-        push!(ret2, number_op(psi1, w, n))
-    end
+    # ret2 = []
+    # for n=1: div(N,2)
+    #     push!(ret2, number_op(psi1, w, n))
+    # end
 
-    p = plot(title="Number operator vaules for Random and Minimized states", xlabel="Site", ylabel="Number operator value")
-    plot!(p, ret, label="zero")
-    plot!(p, ret2, label="one")
-    display(p)
+    # p = plot(title="Number operator vaules for Random and Minimized states", xlabel="Site", ylabel="Number operator value")
+    # plot!(p, ret, label="zero")
+    # plot!(p, ret2, label="one")
+    # display(p)
 
 end
