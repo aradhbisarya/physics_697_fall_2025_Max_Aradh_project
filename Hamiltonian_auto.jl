@@ -3,15 +3,19 @@ using Plots
 using Printf
 using Base.Threads
 using ProgressMeter
+using LinearAlgebra
+
+BLAS.set_num_threads(1)
+ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
 
 #sites, flavors, colors
-N = 20
+N = 10
 F = 1
 C = 3
 
 #mass and coupling strength
-m0 = 20
-g = 1
+m0 = .5
+g = -.2
 
 #site size
 a = 1
@@ -20,7 +24,7 @@ a = 1
 w = 1/(2*a*g)
 J = (a*g) / 2
 m = m0 / g
-L = 10000
+L = 0
 
 sites = siteinds("S=1/2", (N*F*C), conserve_qns=true)
 
@@ -60,12 +64,12 @@ function l(n, f, c) #site index calculation
 end
 
 
-function QijN(n, i, j, coeff)
+function QijN(n, i, j)
     ret = []
+    temp_coeff = 1/sqrt(2)
     for f=1: F
-        coeff = 1/sqrt(2)
         temp = []
-        push!(temp, coeff)
+        push!(temp, temp_coeff)
         addOp!(temp, "S+", l(n, f, i) + 1)
         addArr!(temp, BigLambda(n, f, i, j))
         addOp!(temp, "S-", l(n, f, j) + 1)
@@ -75,14 +79,14 @@ function QijN(n, i, j, coeff)
     return ret
 end
 
-function QiiN(n, i, coeff)
-    coeff = 1
+function QiiN(n, i)
+    temp = 1
     ret = []
     for f=1: F
-        coeff *= (1/(2*sqrt(2i*(i -1))))
+        temp *= (1/(2*sqrt(2*i*(i -1))))
         for c=1 : i - 1
-            push!(ret, (coeff, "Sz", l(n, f, c) + 1))
-            push!(ret, (-1 * coeff, "Sz", l(n, f, i) + 1))
+            push!(ret, (temp, "Sz", l(n, f, c) + 1))
+            push!(ret, (-1 * temp, "Sz", l(n, f, i) + 1))
         end
     end
     return ret
@@ -90,33 +94,41 @@ end
 
 function BigLambda(n, f, i, j)
     ret = []
-    coeff = 1
+    temp = 1
     for k=l(n, f, j) : l(n, f, i) - 1
-        coeff *= -2
+        temp *= -2
         addOp!(ret, "Sz", k + 1)
     end
-    pushfirst!(ret, coeff)
+    pushfirst!(ret, temp)
     return ret
 end 
 
-function QiNQiM(n, m, coeff)
+function QiNQiM(n, o, coeff)
     ret = []
     for i=2 : C 
         for j=1: i - 1
-            A = QijN(n, j, i, coeff)
-            B = QijN(m, i, j, coeff)
+            A = QijN(n, j, i)
+            B = QijN(o, i, j)
             append!(ret, product(A, B))
-            A = QijN(n, i, j, coeff)
-            B = QijN(m, j, i, coeff)
+            A = QijN(n, i, j)
+            B = QijN(o, j, i)
             append!(ret, product(A, B))
         end
     end
     for i=2 : C
-        A = QiiN(n, i, coeff)
-        B = QiiN(m, i, coeff)
+        A = QiiN(n, i)
+        B = QiiN(o, i)
         append!(ret, product(A, B))
     end
-    return ret
+
+    scaled_terms = []
+    for term in ret
+        new_coeff = term[1] * coeff
+
+        push!(scaled_terms, tuple(new_coeff, term[2:end]...))
+    end
+    
+    return scaled_terms
 end
 
 function plot_observables(psi, N, F, C) #AI generated plot
@@ -212,19 +224,20 @@ function phase_diagram(steps)
         mass_step = mass_vals[i]
         for j=1 : steps
             coupling_step = coupling_vals[j]
-            if coupling_step == 0
+            if abs(coupling_step) < 1e-6 
+                M[j, i] = NaN
+                next!(p)
                 continue
             end
-            # @printf("step %10d", (steps * (i - 1)) + j)
-            # print("/")
-            # @printf("%10d\n", steps * steps)
-            # println(mass)
-            # println(coupling)
-            H = construct_hamiltonian(N, F, C, mass_step, a, coupling_step)
-            EGap = calc_energy_gap(H, false)
+            H = construct_hamiltonian(sites, N, F, C, mass_step, a, coupling_step, L)
+            EGap = calc_energy_gap(sites, H, false)
     
 
-            M[j, i] = EGap[2] - EGap[1]
+            if isnan(EGap[1])
+                M[j, i] = NaN
+            else
+                M[j, i] = EGap[2] - EGap[1]
+            end
 
             next!(p)
         end
@@ -249,24 +262,18 @@ function phase_diagram(steps)
     display(hm)
 end
 
-function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
-    N = NNew
-    F = FNew   
-    C = CNew
-    m0 = m0New
-    a = aNew
-    g = gNew
-    m = m0/g
-    w = 1/(2*a*g)
-    J = (a*g) / 2
+function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
+    mNew = m0New/gNew
+    wNew = 1/(2*aNew*gNew)
+    JNew = (aNew*gNew) / 2
 
     #Mass
     Mass = AutoMPO()
-    for n=1: N 
+    for n=1: NNew 
         i = isodd(n) ? -1 : 1
-        coeff = m*i
-        for f=1: F
-            for c=1: C
+        coeff = mNew*i
+        for f=1: FNew
+            for c=1: CNew
                 Mass += coeff, "Sz", l(n, f, c) + 1
                 Mass += coeff, "Id", l(n, f, c) + 1
             end
@@ -275,15 +282,15 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
 
     #Hopping
     Hopping = AutoMPO()
-    for n=1: N-1
-        for f=1: F
-            for c=1: C
+    for n=1: NNew-1
+        for f=1: FNew
+            for c=1: CNew
                 for i=1 : 2
                     s1 = l(n+1, f, c)
                     s2 = l(n, f, c)
                     if i==1
                         temp = []
-                        coeff = 1
+                        coeff = wNew
                         addOp!(temp, "S+", s1 + 1)
                         for k=s2 : s1 - 1
                             coeff *= -2
@@ -294,7 +301,7 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
                         Hopping += tuple(temp...)
                     else
                         temp = []
-                        coeff = 1
+                        coeff = wNew
                         addOp!(temp, "S+", s2 + 1)
                         for k=s2 : s1 - 1
                             coeff *= -2
@@ -311,16 +318,16 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
 
     #Electric
     Electric = AutoMPO()
-    for n=1 : N - 1
-        coeff = (N) - n
-        for i in QiNQiM(n, n, J * coeff)
+    for n=1 : NNew - 1
+        coeff = (NNew) - n
+        for i in QiNQiM(n, n, JNew * coeff)
             Electric += i
         end
     end
-    for n=1 : N - 2
-        for m=n+1 : N - 1
-            coeff = (N) - m 
-            for i in QiNQiM(n, m, 2 * J * coeff)
+    for n=1 : NNew - 2
+        for o=n+1 : NNew - 1
+            coeff = (NNew) - o
+            for i in QiNQiM(n, o, 2 * JNew * coeff)
                 Electric += i
             end 
         end
@@ -328,9 +335,9 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
 
     #Flux
     Flux = AutoMPO()
-    for n1=1: N
-        for n2=1: N
-            for i in QiNQiM(n1, n2, L)
+    for n1=1: NNew
+        for n2=1: NNew
+            for i in QiNQiM(n1, n2, LNew)
                 Flux += i
             end
         end
@@ -339,19 +346,27 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
     return MPO(Hopping + Mass + Electric + Flux, sites)
 end
 
-function calc_energy_gap(H, print)
-    nsweeps = 15 # number of sweeps
-    maxdim = [10,20,100,100,200, 2000] # gradually increase states kept
-    cutoff = [1E-15] # desired truncation error
+function calc_energy_gap(sites, H, show)
+    nsweeps = 20 # number of sweeps
+    maxdim = [10,20,100,200, 400, 800, 2000, 4000] # gradually increase states kept
+    cutoff = [1E-12] # desired truncation error
+    noise = [1E-4, 1E-5, 1E-6, 1E-7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    #noise = [1E-6, 1E-7, 1E-8, 0.0, 0.0, 0.0]
 
     state_array = [isodd(div(x-1, F*C) + 1) ? "Up" : "Dn" for x in 1:(N*F*C)]
 
-    psi_init_0 = random_mps(sites, state_array)
+    psi = MPS(sites, state_array)
 
-    energy,psi0 = dmrg(H,psi_init_0;nsweeps,maxdim,cutoff, outputlevel=0)
-    if print
+    if show
+        energy, psi0 = dmrg(H, psi; nsweeps, maxdim, noise, cutoff)
+    else
+        energy, psi0 = dmrg(H, psi; nsweeps, maxdim, cutoff, noise, outputlevel = 0)
+    end
+
+    if show
         println("Generating ansatz for Excited State (Meson)...")
     end
+
     psi_init_1 = copy(psi0)
     successful_flip = false
 
@@ -364,7 +379,7 @@ function calc_energy_gap(H, print)
         psi_test = apply([op1, op2], psi_init_1; cutoff=1E-12)
         
         if norm(psi_test) > 0.1 # If norm is non-zero, flip is valid
-            if print
+            if show
                 println("Found flippable ↓↑ site at bond $b. Creating Meson...")
             end
             psi_init_1 = psi_test
@@ -379,7 +394,7 @@ function calc_energy_gap(H, print)
         psi_test = apply([op3, op4], psi_init_1; cutoff=1E-12)
         
         if norm(psi_test) > 0.1
-            if print
+            if show
                 println("Found flippable ↑↓ site at bond $b. Creating Meson...")
             end
             psi_init_1 = psi_test
@@ -389,31 +404,34 @@ function calc_energy_gap(H, print)
     end
 
     if !successful_flip
-        error("Could not find ANY spot to create a meson! The state might be fully polarized (ferromagnetic).")
+        return [NaN, NaN]
     end
-
-    normalize!(psi_init_1)
 
     # Now safe to run DMRG
     # weight can be smaller now that the state is physical
-    energy1, psi1 = dmrg(H, [psi0], psi_init_1; nsweeps, cutoff, weight=100.0, outputlevel = 0)
+    if show
+        energy1, psi1 = dmrg(H, [psi0], psi_init_1; nsweeps, maxdim, cutoff, noise, weight=100.0)
+    else
+        energy1, psi1 = dmrg(H, [psi0], psi_init_1; nsweeps, maxdim, cutoff, noise, weight=100.0, outputlevel=0)
+    end
+    
 
-    if print
+    if show
         print("Ground State Energy = ")
         println(energy)
         print("Excited State Energy = ")
         println(energy1)
         print("Energy Gap = ")
         println(energy1 - energy)
-    end
-
+    end 
     return [energy, energy1]
 
 end
 
 let 
-  phase_diagram(25)
-    # H = construct_hamiltonian(N, F, C, m0, a, g)
+    #phase_diagram(10)
+    H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
+    calc_energy_gap(sites,H, true)
 
     # ret = []
     # for n=1: div(N,2)
@@ -430,10 +448,10 @@ let
     # plot!(p, ret2, label="one")
     # display(p)
     
-    #plot_observables(psi, N, F, C)
+    # plot_observables(psi, N, F, C)
 
-    #plot_correlations(psi)
+    # plot_correlations(psi)
 
-    #plot_entanglement(psi, N*F*C)
+    # plot_entanglement(psi, N*F*C)
 
 end
