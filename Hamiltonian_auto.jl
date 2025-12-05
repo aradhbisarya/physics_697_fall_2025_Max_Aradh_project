@@ -1,22 +1,30 @@
 using ITensors, ITensorMPS
 using Plots
 using Printf
+using Base.Threads
+using ProgressMeter
 
-m0 = 2
-g = 1
-N = 10
-a = 1/N
-w = 1/(2*a*g)
+#sites, flavors, colors
+N = 20
 F = 1
 C = 3
+
+#mass and coupling strength
+m0 = 20
+g = 1
+
+#site size
+a = 1
+
+#charge conserved adjustments
+w = 1/(2*a*g)
 J = (a*g) / 2
 m = m0 / g
 L = 10000
-sites = siteinds("S=1/2", (N*F*C))
 
-function l(n, f, c)
-    return ((n-1)*F*C) + (C*(f -1)) + c - 1
-end
+sites = siteinds("S=1/2", (N*F*C), conserve_qns=true)
+
+#Helper functions
 
 function addOp!(arr, op, site)
     push!(arr, op)
@@ -44,6 +52,13 @@ function combine(a, b)
 
     return tuple(coeff, ops...)
 end
+
+
+
+function l(n, f, c) #site index calculation
+    return ((n-1)*F*C) + (C*(f -1)) + c - 1
+end
+
 
 function QijN(n, i, j, coeff)
     ret = []
@@ -77,7 +92,7 @@ function BigLambda(n, f, i, j)
     ret = []
     coeff = 1
     for k=l(n, f, j) : l(n, f, i) - 1
-        coeff *= -1
+        coeff *= -2
         addOp!(ret, "Sz", k + 1)
     end
     pushfirst!(ret, coeff)
@@ -104,7 +119,7 @@ function QiNQiM(n, m, coeff)
     return ret
 end
 
-function plot_observables(psi, N, F, C)
+function plot_observables(psi, N, F, C) #AI generated plot
     # Calculate expectation value of Sz at every site
     sz = expect(psi, "Sz") 
     
@@ -123,7 +138,7 @@ function plot_observables(psi, N, F, C)
     display(p)
 end
 
-function plot_correlations(psi)
+function plot_correlations(psi) #AI generated plot
     # specific operators
     M = correlation_matrix(psi, "Sz", "Sz")
     
@@ -138,7 +153,7 @@ function plot_correlations(psi)
     display(hm)
 end
 
-function plot_entanglement(psi, N_total)
+function plot_entanglement(psi, N_total) #AI generated plot
     entropies = Float64[]
     
     # Orthogonalize to the first site to start
@@ -186,40 +201,50 @@ end
 
 function phase_diagram(steps)
     M = zeros(steps, steps)
-    mass = -1
-    coupling = 0
-    mass_step = 2/steps
-    coupling_step = 1/steps
-    for i=1 : steps
+    mass = 1
+    coupling = 1
+    mass_vals = range(-mass, mass, length=steps)
+    coupling_vals = range(-coupling, coupling, length=steps)
+
+    p = Progress(steps * steps, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+
+    Threads.@threads :dynamic for i=1 : steps
+        mass_step = mass_vals[i]
         for j=1 : steps
-            @printf("step %10d", i + j)
-            print("/")
-            @printf("%10d\n", steps * steps)
-            H = construct_hamiltonian(N, F, C, mass, a, coupling)
-            nsweeps = 15 # number of sweeps is 5
-            maxdim = [10,20,100,100,200] # gradually increase states kept
-            cutoff = [1E-10] # desired truncation error
+            coupling_step = coupling_vals[j]
+            if coupling_step == 0
+                continue
+            end
+            # @printf("step %10d", (steps * (i - 1)) + j)
+            # print("/")
+            # @printf("%10d\n", steps * steps)
+            # println(mass)
+            # println(coupling)
+            H = construct_hamiltonian(N, F, C, mass_step, a, coupling_step)
+            EGap = calc_energy_gap(H, false)
+    
 
-            psi = random_mps(sites;linkdims=2)
+            M[j, i] = EGap[2] - EGap[1]
 
-            energy,psi0 = dmrg(H,psi;nsweeps,maxdim,cutoff)
-            wfs = [psi0]
-
-            energy1, psi1 = dmrg(H, wfs, random_mps(sites;linkdims=2); nsweeps, cutoff, weight= 20.0)
-
-            M[i, j] = energy1 - energy
-
-            coupling += coupling_step
+            next!(p)
         end
-        mass += mass_step
     end
+    gr()
 
-    hm = heatmap(M, 
-        title="Phase Diagram (Ground State)", 
-        xlabel="Mass -1 to 1", 
-        ylabel="Coupling 0 to 1",
-        color=:viridis,
-        aspect_ratio=:equal
+    threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
+    data_trimmed = copy(M)
+    data_trimmed[data_trimmed .> threshold] .= NaN
+    print(M)
+
+    hm = heatmap(
+        mass_vals,      # X-axis values
+        coupling_vals,  # Y-axis values
+        data_trimmed,
+        title = "Phase Diagram (Ground State Energy Gap)",
+        ylabel = "Coupling Strength",
+        xlabel = "Mass",
+        na_color = :green,
+        c = :viridis 
     )
     display(hm)
 end
@@ -231,7 +256,7 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
     m0 = m0New
     a = aNew
     g = gNew
-    m - m0/g
+    m = m0/g
     w = 1/(2*a*g)
     J = (a*g) / 2
 
@@ -239,10 +264,10 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
     Mass = AutoMPO()
     for n=1: N 
         i = isodd(n) ? -1 : 1
-        coeff = 0.5*m*i
+        coeff = m*i
         for f=1: F
             for c=1: C
-                Mass += coeff, "Z", l(n, f, c) + 1
+                Mass += coeff, "Sz", l(n, f, c) + 1
                 Mass += coeff, "Id", l(n, f, c) + 1
             end
         end
@@ -261,8 +286,8 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
                         coeff = 1
                         addOp!(temp, "S+", s1 + 1)
                         for k=s2 : s1 - 1
-                            coeff *= -1
-                            addOp!(temp, "Z", k + 1)
+                            coeff *= -2
+                            addOp!(temp, "Sz", k + 1)
                         end
                         addOp!(temp, "S-", s2 + 1)
                         pushfirst!(temp, coeff)
@@ -272,8 +297,8 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
                         coeff = 1
                         addOp!(temp, "S+", s2 + 1)
                         for k=s2 : s1 - 1
-                            coeff *= -1
-                            addOp!(temp, "Z", k + 1)
+                            coeff *= -2
+                            addOp!(temp, "Sz", k + 1)
                         end
                         addOp!(temp, "S-", s1 + 1)
                         pushfirst!(temp, coeff)
@@ -314,35 +339,82 @@ function construct_hamiltonian(NNew, FNew, CNew, m0New, aNew, gNew)
     return MPO(Hopping + Mass + Electric + Flux, sites)
 end
 
+function calc_energy_gap(H, print)
+    nsweeps = 15 # number of sweeps
+    maxdim = [10,20,100,100,200, 2000] # gradually increase states kept
+    cutoff = [1E-15] # desired truncation error
+
+    state_array = [isodd(div(x-1, F*C) + 1) ? "Up" : "Dn" for x in 1:(N*F*C)]
+
+    psi_init_0 = random_mps(sites, state_array)
+
+    energy,psi0 = dmrg(H,psi_init_0;nsweeps,maxdim,cutoff, outputlevel=0)
+    if print
+        println("Generating ansatz for Excited State (Meson)...")
+    end
+    psi_init_1 = copy(psi0)
+    successful_flip = false
+
+    # Loop through every bond in the lattice to find a "flippable" pair
+    for b in 1 : (N*F*C - 1)
+        # Try direction 1
+        op1 = op("S+", sites[b])
+        op2 = op("S-", sites[b+1])
+        
+        psi_test = apply([op1, op2], psi_init_1; cutoff=1E-12)
+        
+        if norm(psi_test) > 0.1 # If norm is non-zero, flip is valid
+            if print
+                println("Found flippable ↓↑ site at bond $b. Creating Meson...")
+            end
+            psi_init_1 = psi_test
+            successful_flip = true
+            break
+        end
+        
+        # Try direction 2
+        op3 = op("S-", sites[b])
+        op4 = op("S+", sites[b+1])
+        
+        psi_test = apply([op3, op4], psi_init_1; cutoff=1E-12)
+        
+        if norm(psi_test) > 0.1
+            if print
+                println("Found flippable ↑↓ site at bond $b. Creating Meson...")
+            end
+            psi_init_1 = psi_test
+            successful_flip = true
+            break
+        end
+    end
+
+    if !successful_flip
+        error("Could not find ANY spot to create a meson! The state might be fully polarized (ferromagnetic).")
+    end
+
+    normalize!(psi_init_1)
+
+    # Now safe to run DMRG
+    # weight can be smaller now that the state is physical
+    energy1, psi1 = dmrg(H, [psi0], psi_init_1; nsweeps, cutoff, weight=100.0, outputlevel = 0)
+
+    if print
+        print("Ground State Energy = ")
+        println(energy)
+        print("Excited State Energy = ")
+        println(energy1)
+        print("Energy Gap = ")
+        println(energy1 - energy)
+    end
+
+    return [energy, energy1]
+
+end
+
 let 
-    phase_diagram(25)
+  phase_diagram(25)
     # H = construct_hamiltonian(N, F, C, m0, a, g)
-    # nsweeps = 5 # number of sweeps is 5
-    # maxdim = [10,20,100,100,200] # gradually increase states kept
-    # cutoff = [1E-10] # desired truncation error
 
-    # psi = random_mps(sites;linkdims=2)
-
-    # energy,psi0 = dmrg(H,psi;nsweeps,maxdim,cutoff)
-
-    
-
-    # wfs = [psi0]
-
-    # energy1, psi1 = dmrg(H, wfs, random_mps(sites;linkdims=2); nsweeps, cutoff, weight= 20.0)
-
-    # print("Ground State Energy = ")
-    # println(energy)
-    # print("Excited State Energy = ")
-    # println(energy1)
-    # print("Energy Gap = ")
-    # println(energy1 - energy)
-
-    # #plot_observables(psi, N, F, C)
-
-    # #plot_correlations(psi)
-
-    # #plot_entanglement(psi, N*F*C)
     # ret = []
     # for n=1: div(N,2)
     #     push!(ret, number_op(psi0, w, n))
@@ -357,5 +429,11 @@ let
     # plot!(p, ret, label="zero")
     # plot!(p, ret2, label="one")
     # display(p)
+    
+    #plot_observables(psi, N, F, C)
+
+    #plot_correlations(psi)
+
+    #plot_entanglement(psi, N*F*C)
 
 end
