@@ -9,7 +9,7 @@ BLAS.set_num_threads(1)
 ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
 
 #sites, flavors, colors
-N = 6
+N = 10
 F = 1
 C = 3
 
@@ -395,8 +395,9 @@ function construct_flux(NNew, LNew)
     Flux = AutoMPO()
     for n1=1: NNew
         for n2=1: NNew
-            for i in QiNQiM(n1, n2, LNew)
-                Flux += i
+            for i in QiNQiM(n1, n2)
+                new_coeff = i[1] * LNew
+                Flux += tuple(new_coeff, i[2:end]...)
             end
         end
     end
@@ -509,7 +510,7 @@ function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
 end
 
 let 
-    phase_diagram_mn(8)
+    phase_diagram_mn(10)
     # H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
     # calc_energy_gap(sites,H, true)
 
