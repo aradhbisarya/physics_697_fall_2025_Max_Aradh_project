@@ -4,127 +4,117 @@ using Printf
 using Base.Threads
 using ProgressMeter
 using LinearAlgebra
+using JLD2
 
 BLAS.set_num_threads(1)
 ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
 
-#sites, flavors, colors
-N = 10
-F = 1
-C = 3
+struct ModelParams
+    N::Int
+    F::Int
+    C::Int
+    a::Float64
+    g::Float64
+    m0::Float64
+    L::Float64
+end
 
-#mass and coupling strength
-m0 = .5
-g = -.2
+struct SymOp
+    name::String
+    site::Int
+end
 
-#site size
-a = 1
-
-#charge conserved adjustments
-w = 1/(2*a*g)
-J = (a*g) / 2
-m = m0 / g
-L = 0
-
-sites = siteinds("S=1/2", (N*F*C), conserve_qns=true)
+struct SymTerm
+    coeff::Float64
+    ops::Vector{SymOp}
+end
 
 #Helper functions
 
-function addOp!(arr, op, site)
-    push!(arr, op)
-    push!(arr, site)
-end
+l(n, f, c, p::ModelParams) = ((n-1) * p.F * p.C) + (p.C * (f - 1)) + c - 1
 
-function addArr!(arr1, arr2)
-    arr1[1] *= arr2[1]
-    arr1 = append!(arr1, arr2[2:end])
-end
-
-function product(A, B)
-    ret = []
+# Multiply two symbolic terms (expands A * B)
+function multiply_terms(A::Vector{SymTerm}, B::Vector{SymTerm})
+    ret = Vector{SymTerm}()
+    sizehint!(ret, length(A) * length(B))
     for a in A
         for b in B
-            push!(ret, combine(a, b))
+            new_coeff = a.coeff * b.coeff
+            new_ops = vcat(a.ops, b.ops)
+            push!(ret, SymTerm(new_coeff, new_ops))
         end
     end
     return ret
 end
-
-function combine(a, b)
-    coeff = a[1] * b[1]
-    ops = Any[a[2:end]..., b[2:end]...]
-
-    return tuple(coeff, ops...)
-end
-
-
 
 function l(n, f, c) #site index calculation
     return ((n-1)*F*C) + (C*(f -1)) + c - 1
 end
 
 
-function QijN(n, i, j)
-    ret = []
-    temp_coeff = 1/sqrt(2)
-    for f=1: F
-        temp = []
-        push!(temp, temp_coeff)
-        addOp!(temp, "S+", l(n, f, i) + 1)
-        addArr!(temp, BigLambda(n, f, i, j))
-        addOp!(temp, "S-", l(n, f, j) + 1)
-        push!(ret, tuple(temp...))
+function QijN(n, i, j, p::ModelParams)
+    ret = Vector{SymTerm}()
+    pre_coeff = 1.0/sqrt(2)
+    
+    for f in 1:p.F
+        lambda = BigLambda(n, f, i, j, p)
+        
+        # S+ at l(n,f,i), BigLambda, S- at l(n,f,j)
+        new_ops = Vector{SymOp}()
+        push!(new_ops, SymOp("S+", l(n, f, i, p) + 1))
+        append!(new_ops, lambda.ops)
+        push!(new_ops, SymOp("S-", l(n, f, j, p) + 1))
+        
+        final_coeff = pre_coeff * lambda.coeff
+        push!(ret, SymTerm(final_coeff, new_ops))
     end
-
     return ret
 end
 
-function QiiN(n, i)
-    temp = 1
-    ret = []
-    for f=1: F
-        temp *= (1/(2*sqrt(2*i*(i -1))))
-        for c=1 : i - 1
-            push!(ret, (temp, "Sz", l(n, f, c) + 1))
-            push!(ret, (-1 * temp, "Sz", l(n, f, i) + 1))
+function QiiN(n, i, p::ModelParams)
+    ret = Vector{SymTerm}()
+    val = 1.0
+    
+    for f in 1:p.F
+        val *= (1.0 / (2.0 * sqrt(2.0 * i * (i - 1))))
+        for c in 1:(i - 1)
+            push!(ret, SymTerm(val, [SymOp("Sz", l(n, f, c, p) + 1)]))
+            push!(ret, SymTerm(-val, [SymOp("Sz", l(n, f, i, p) + 1)]))
         end
     end
     return ret
 end
 
-function BigLambda(n, f, i, j)
-    ret = []
-    temp = 1
-    for k=l(n, f, j) : l(n, f, i) - 1
-        temp *= -2
-        addOp!(ret, "Sz", k + 1)
+function BigLambda(n, f, i, j, p::ModelParams)
+    # Generates the string of Sz operators
+    coeff = 1.0
+    ops = Vector{SymOp}()
+    
+    start_idx = l(n, f, j, p)
+    end_idx = l(n, f, i, p) - 1
+    
+    for k in start_idx:end_idx
+        coeff *= -2.0
+        push!(ops, SymOp("Sz", k + 1))
     end
-    pushfirst!(ret, temp)
-    return ret
+    return SymTerm(coeff, ops)
 end 
 
-function QiNQiM(n, o)
-    ret = []
-    for i=2 : C 
-        for j=1: i - 1
-            A = QijN(n, j, i)
-            B = QijN(o, i, j)
-            append!(ret, product(A, B))
-            A = QijN(n, i, j)
-            B = QijN(o, j, i)
-            append!(ret, product(A, B))
+function QiNQiM(n, o, p::ModelParams)
+    ret = Vector{SymTerm}()
+    for i in 2:p.C
+        for j in 1:(i - 1)
+            append!(ret, multiply_terms(QijN(n, j, i, p), QijN(o, i, j, p)))
+            append!(ret, multiply_terms(QijN(n, i, j, p), QijN(o, j, i, p)))
         end
     end
-    for i=2 : C
-        A = QiiN(n, i)
-        B = QiiN(o, i)
-        append!(ret, product(A, B))
+    for i in 2:p.C
+        append!(ret, multiply_terms(QiiN(n, i, p), QiiN(o, i, p)))
     end
-
     return ret
 end
 
-function plot_observables(psi, N, F, C) #AI generated plot
+function plot_observables(psi, N, F, C)
     # Calculate expectation value of Sz at every site
     sz = expect(psi, "Sz") 
     
@@ -143,7 +133,7 @@ function plot_observables(psi, N, F, C) #AI generated plot
     display(p)
 end
 
-function plot_correlations(psi) #AI generated plot
+function plot_correlations(psi) 
     # specific operators
     M = correlation_matrix(psi, "Sz", "Sz")
     
@@ -158,7 +148,7 @@ function plot_correlations(psi) #AI generated plot
     display(hm)
 end
 
-function plot_entanglement(psi, N_total) #AI generated plot
+function plot_entanglement(psi, N_total) 
     entropies = Float64[]
     
     # Orthogonalize to the first site to start
@@ -193,12 +183,12 @@ function plot_entanglement(psi, N_total) #AI generated plot
     display(p)
 end
 
-function number_op(psi, w, n)
+function number_op(psi, w, n, params)
     num = AutoMPO()
 
     for c=1: C
-        num += (w/2), "Sz", l(2*n, 1, c) + 1
-        num += (w/2), "Sz", l((2*n)-1, 1, c) + 1
+        num += (w/2), "Sz", l(2*n, 1, c, params) + 1
+        num += (w/2), "Sz", l((2*n)-1, 1, c, params) + 1
     end
 
     return inner(psi', MPO(num, siteinds(psi)), psi)
@@ -262,227 +252,255 @@ function phase_diagram(steps)
     display(hm)
 end
 
-function phase_diagram_mn(steps)
-    mass = 20
-    mass_vals = range(-mass, mass, length=steps*4)
-    n_vals = [i for i in 1:steps if iseven(i)]
-    M = zeros(length(mass_vals), length(n_vals))
-
-    p = Progress(length(n_vals) * length(mass_vals), desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
-
-    for i=1 : length(n_vals)
-        n_step = n_vals[i]
-
-        wNew = 1/(2*a*1)
-        JNew = (a*1) / 2
-        sitesNew = siteinds("S=1/2", (n_step*F*C), conserve_qns=true)
-
-        m_elem = MPO(construct_mass(n_step, F, C), sitesNew)
-        c_elem = MPO(construct_hopping(n_step, F, C), sitesNew)
-        e_elem = MPO(construct_electric(n_step, JNew), sitesNew)
-        f_elem = MPO(construct_flux(n_step, L), sitesNew)
-
-        H_fixed = (wNew * c_elem) + e_elem + f_elem
-        
-        Threads.@threads :dynamic for j=1 : length(mass_vals)
-            mass_step = mass_vals[j]
-
-            H = (mass_step * m_elem) + H_fixed
-            EGap = calc_energy_gap(n_step, F, C, sitesNew, H, false)
-    
-
-            if isnan(EGap[1])
-                M[j, i] = NaN
-            else
-                M[j, i] = EGap[2] - EGap[1]
+function construct_mass_op(sites, p::ModelParams)
+    os = OpSum()
+    for n in 1:p.N
+        sign_val = isodd(n) ? -1.0 : 1.0
+        # Note: We do NOT multiply by mass here, we do it in the loop later
+        coeff = sign_val 
+        for f in 1:p.F
+            for c in 1:p.C
+                idx = l(n, f, c, p) + 1
+                os += coeff, "Sz", idx
+                os += coeff, "Id", idx
             end
-
-            next!(p)
         end
     end
-    gr()
+    return MPO(os, sites)
+end
 
-    threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
-    data_trimmed = copy(M)
-    data_trimmed[data_trimmed .> threshold] .= NaN
-    print(M)
+function construct_hopping_op(sites, p::ModelParams)
+    os = OpSum()
+    for n in 1:(p.N - 1)
+        for f in 1:p.F
+            for c in 1:p.C
+                s1 = l(n+1, f, c, p)
+                s2 = l(n, f, c, p)
+                
+                # Term 1: S+(s1) ... S-(s2)
+                c1 = 1.0
+                ops1 = Any[]
+                push!(ops1, "S+", s1 + 1)
+                for k in s2:(s1-1)
+                    c1 *= -2.0
+                    push!(ops1, "Sz", k + 1)
+                end
+                push!(ops1, "S-", s2 + 1)
+                # Combine coeff and ops into one tuple
+                os += (c1, ops1...)
+                
+                # Term 2: S+(s2) ... S-(s1)
+                c2 = 1.0
+                ops2 = Any[]
+                push!(ops2, "S+", s2 + 1)
+                for k in s2:(s1-1)
+                    c2 *= -2.0
+                    push!(ops2, "Sz", k + 1)
+                end
+                push!(ops2, "S-", s1 + 1)
+                os += (c2, ops2...)
+            end
+        end
+    end
+    return MPO(os, sites)
+end
+
+function construct_electric_op(sites, p::ModelParams, J::Float64)
+    os = OpSum()
+
+    # Internal helper to add terms to local os
+    function add_terms_locally!(terms, factor)
+        for t in terms
+            final_coeff = t.coeff * factor
+            if abs(final_coeff) > 1e-14
+                args = Any[final_coeff]
+                for op in t.ops
+                    push!(args, op.name, op.site)
+                end
+                os += Tuple(args)
+            end
+        end
+    end
+
+    for n in 1:(p.N - 1)
+        coeff = Float64(p.N - n)
+        terms = QiNQiM(n, n, p)
+        add_terms_locally!(terms, coeff * J)
+    end
+    for n in 1:(p.N - 2)
+        for o in (n + 1):(p.N - 1)
+            coeff = Float64(p.N - o)
+            terms = QiNQiM(n, o, p)
+            add_terms_locally!(terms, coeff * 2 * J)
+        end
+    end
+    return MPO(os, sites)
+end
+
+function construct_flux_op(sites, p::ModelParams)
+    os = OpSum()
+
+    function add_terms_locally!(terms, factor)
+        for t in terms
+            final_coeff = t.coeff * factor
+            if abs(final_coeff) > 1e-14
+                args = Any[final_coeff]
+                for op in t.ops
+                    push!(args, op.name, op.site)
+                end
+                os += Tuple(args)
+            end
+        end
+    end
+
+    for n1 in 1:p.N
+        for n2 in 1:p.N
+            terms = QiNQiM(n1, n2, p)
+            add_terms_locally!(terms, p.L)
+        end
+    end
+    return MPO(os, sites)
+end
+
+function construct_hamiltonian(p, s)
+    params = p
+    sites = s
+
+    m = params.m0/params.g
+    w = 1.0 / (2 * params.a * params.g)
+    J = (params.a * params.g) / 2.0
+
+    #Mass
+    Mass = construct_mass_op(sites, params) * m
+
+    #Hopping
+    
+    Hopping = construct_hopping_op(sites, params) * w
+
+    #Electric
+    
+    Electric = construct_electric_op(sites, params, J)
+
+    #Flux
+    if p.L != 0.0
+        Flux = construct_flux_op(sites, params)
+        return Mass + Hopping + Electric + Flux
+    end
+
+    return Mass + Hopping + Electric
+end
+
+function phase_diagram_mn(steps)
+    # Define Base Parameters
+    F, C = 1, 3
+    a_val, g_val, m0_val, L_val = 1.0, 1.0, 1.0, 0.0
+    
+    mass_limit = 20.0
+    mass_vals = collect(range(-mass_limit, mass_limit, length=steps*4))
+    n_vals = [i for i in 1:steps if iseven(i)]
+    
+    # Pre-allocate matrix (rows=mass, cols=sites)
+    results = zeros(Float64, length(mass_vals), length(n_vals))
+
+    p_meter = Progress(length(n_vals) * length(mass_vals), desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+
+    for i in 1:length(n_vals)
+        local_n = n_vals[i]
+
+        params = ModelParams(local_n, F, C, a_val, g_val, m0_val, L_val)
+
+        # Constants
+        w = 1.0 / (2 * params.a * params.g)
+        J = (params.a * params.g) / 2.0
+        
+        local_sites = siteinds("S=1/2", local_n * params.F * params.C, conserve_qns=true)
+
+        m_op = construct_mass_op(local_sites, params)
+        h_op  = construct_hopping_op(local_sites, params)
+        e_op = construct_electric_op(local_sites, params, J)
+        #f_op = construct_flux_op(local_sites, params)
+
+
+        H_fixed = (w * h_op) + e_op
+        
+        Threads.@threads :dynamic for j in 1:length(mass_vals)
+            mass_step = mass_vals[j]
+
+            H = (mass_step * m_op) + H_fixed
+            gaps = calc_energy_gap(params, local_sites, H, false)
+    
+
+            if isnan(gaps[1])
+                results[j, i] = NaN
+            else
+                results[j, i] = gaps[2] - gaps[1]
+            end
+
+            next!(p_meter)
+        end
+    end
+
+    # ... loops finished ...
+
+    # Trim data for saving (optional: you can save the raw 'results' instead if you prefer)
+    threshold = 1000.0
+    results_to_save = copy(results)
+    results[results .> threshold] .= NaN
+
+    println("Saving simulation data to phase_diagram.jld2...")
+    jldsave("phase_diagram.jld2"; 
+        results=results_to_save, 
+        mass_vals=mass_vals, 
+        n_vals=n_vals
+    )
+
+    # ... proceed to plotting ...
 
     hm = heatmap(
         mass_vals,      # X-axis values
         n_vals,  # Y-axis values
-        data_trimmed,
+        results_to_save',
         title = "Phase Diagram (Ground State Energy Gap)",
-        ylabel = "site",
+        ylabel = "Sites (N)",
         xlabel = "Mass",
         na_color = :green,
         c = :viridis 
     )
     display(hm)
+    return results
 end
 
-function construct_mass(NNew, FNew, CNew)
-    Mass = AutoMPO()
-    for n=1: NNew 
-        i = isodd(n) ? -1 : 1
-        coeff = i
-        for f=1: FNew
-            for c=1: CNew
-                Mass += coeff, "Sz", l(n, f, c) + 1
-                Mass += coeff, "Id", l(n, f, c) + 1
-            end
-        end
-    end
-    return Mass
-end
+function calc_energy_gap(p::ModelParams, sites, H, show_output::Bool)
+    nsweeps = 15
+    maxdim = [10, 20, 100, 200, 400, 800, 1000, 2000]
+    cutoff = [1E-6, 1E-8, 1E-12]
+    noise = [1E-4, 1E-5, 1E-6, 0.0]
 
-function construct_hopping(NNew, FNew, CNew)
-    Hopping = AutoMPO()
-    for n=1: NNew-1
-        for f=1: FNew
-            for c=1: CNew
-                for i=1 : 2
-                    s1 = l(n+1, f, c)
-                    s2 = l(n, f, c)
-                    if i==1
-                        temp = []
-                        coeff = 1
-                        addOp!(temp, "S+", s1 + 1)
-                        for k=s2 : s1 - 1
-                            coeff *= -2
-                            addOp!(temp, "Sz", k + 1)
-                        end
-                        addOp!(temp, "S-", s2 + 1)
-                        pushfirst!(temp, coeff)
-                        Hopping += tuple(temp...)
-                    else
-                        temp = []
-                        coeff = 1
-                        addOp!(temp, "S+", s2 + 1)
-                        for k=s2 : s1 - 1
-                            coeff *= -2
-                            addOp!(temp, "Sz", k + 1)
-                        end
-                        addOp!(temp, "S-", s1 + 1)
-                        pushfirst!(temp, coeff)
-                        Hopping += tuple(temp...)
-                    end
-                end
-            end
-        end
-    end
-    return Hopping
-end
-
-function construct_electric(NNew, JNew)
-    Electric = AutoMPO()
-    for n=1 : NNew - 1
-        coeff = (NNew) - n
-        for i in QiNQiM(n, n)
-            new_coeff = i[1] * coeff * JNew
-            Electric += tuple(new_coeff, i[2:end]...)
-        end
-    end
-    for n=1 : NNew - 2
-        for o=n+1 : NNew - 1
-            coeff = (NNew) - o
-            for i in QiNQiM(n, o)
-                new_coeff = i[1] * 2 * JNew * coeff
-                Electric += tuple(new_coeff, i[2:end]...)
-            end 
-        end
-    end
-    return Electric
-
-end
-
-function construct_flux(NNew, LNew)
-    Flux = AutoMPO()
-    for n1=1: NNew
-        for n2=1: NNew
-            for i in QiNQiM(n1, n2)
-                new_coeff = i[1] * LNew
-                Flux += tuple(new_coeff, i[2:end]...)
-            end
-        end
-    end
-    return Flux
-end
-
-function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
-    mNew = m0New/gNew
-    wNew = 1/(2*aNew*gNew)
-    JNew = (aNew*gNew) / 2
-
-    #Mass
-    Mass = construct_mass(NNew, FNew, CNew, mNew) * mNew
-
-    #Hopping
-    
-    Hopping = construct_hopping(NNew, FNew, CNew) * wNew
-
-    #Electric
-    
-    Electric = construct_electric(NNew, JNew)
-
-    #Flux
-
-    Flux = construct_flux(NNew, LNew)
-
-    return MPO(Hopping + Mass + Electric + Flux, sites)
-end
-
-function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
-    nsweeps = 15 # number of sweeps
-    maxdim = [10,20,20, 100, 200, 200, 400, 800, 1000, 1000, 2000, 2000, 2000, 2000, 2000] # gradually increase states kept
-    cutoff = [1E-5, 1E-5, 1E-8, 1E-12] # desired truncation error
-    noise = [1E-4, 1E-5, 1E-6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    #noise = [1E-6, 1E-7, 1E-8, 0.0, 0.0, 0.0]
-
-    state_array = [isodd(div(x-1, F*C) + 1) ? "Up" : "Dn" for x in 1:(NNew*FNew*CNew)]
-
+    total_sites = length(sites)
+    state_array = [isodd(div(x-1, p.F * p.C) + 1) ? "Up" : "Dn" for x in 1:total_sites]
     psi = MPS(sites, state_array)
 
-    if show
-        energy, psi0 = dmrg(H, psi; nsweeps, maxdim, noise, cutoff)
-    else
-        energy, psi0 = dmrg(H, psi; nsweeps, maxdim, cutoff, noise, outputlevel = 0)
-    end
+    output_lvl = show_output ? 1 : 0
+    energy0, psi0 = dmrg(H, psi; nsweeps, maxdim, cutoff, noise, outputlevel=output_lvl)
 
-    if show
-        println("Generating ansatz for Excited State (Meson)...")
-    end
+    if show_output; println("Generating ansatz for Excited State..."); end
 
-    psi_init_1 = copy(psi0)
+    psi_exc = copy(psi0)
     successful_flip = false
 
-    # Loop through every bond in the lattice to find a "flippable" pair
-    for b in 1 : (NNew*FNew*CNew - 1)
+    # Loop through every bond to find a "flippable" pair
+    for b in 1:(total_sites - 1)
         # Try direction 1
-        op1 = op("S+", sites[b])
-        op2 = op("S-", sites[b+1])
-        
-        psi_test = apply([op1, op2], psi_init_1; cutoff=1E-12)
-        
-        if norm(psi_test) > 0.1 # If norm is non-zero, flip is valid
-            if show
-                println("Found flippable ↓↑ site at bond $b. Creating Meson...")
-            end
-            psi_init_1 = psi_test
+        psi_test = apply([op("S+", sites[b]), op("S-", sites[b+1])], psi_exc; cutoff=1E-12)
+        if norm(psi_test) > 0.1
+            psi_exc = psi_test
             successful_flip = true
             break
         end
-        
         # Try direction 2
-        op3 = op("S-", sites[b])
-        op4 = op("S+", sites[b+1])
-        
-        psi_test = apply([op3, op4], psi_init_1; cutoff=1E-12)
-        
+        psi_test = apply([op("S-", sites[b]), op("S+", sites[b+1])], psi_exc; cutoff=1E-12)
         if norm(psi_test) > 0.1
-            if show
-                println("Found flippable ↑↓ site at bond $b. Creating Meson...")
-            end
-            psi_init_1 = psi_test
+            psi_exc = psi_test
             successful_flip = true
             break
         end
@@ -492,31 +510,17 @@ function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
         return [NaN, NaN]
     end
 
-    # Now safe to run DMRG
-    # weight can be smaller now that the state is physical
-    if show
-        energy1, psi1 = dmrg(H, [psi0], psi_init_1; nsweeps, maxdim, cutoff, noise, weight=100.0)
-    else
-        energy1, psi1 = dmrg(H, [psi0], psi_init_1; nsweeps, maxdim, cutoff, noise, weight=100.0, outputlevel=0)
-    end
-    
-
-    if show
-        print("Ground State Energy = ")
-        println(energy)
-        print("Excited State Energy = ")
-        println(energy1)
-        print("Energy Gap = ")
-        println(energy1 - energy)
-    end 
-    return [energy, energy1]
-
+    energy1, _ = dmrg(H, [psi0], psi_exc; nsweeps, maxdim, cutoff, noise, weight=100.0, outputlevel=output_lvl)
+    return [energy0, energy1]
 end
 
 let 
-    phase_diagram_mn(16)
-    # H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
-    # calc_energy_gap(sites,H, true)
+    phase_diagram_mn(10)
+
+    # params = ModelParams(10, 1, 3, 1.0, 1.0, 10.0, 0.0)
+    # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
+    # H = construct_hamiltonian(params, sites)
+    # calc_energy_gap(params, sites, H, true)
 
     # ret = []
     # for n=1: div(N,2)
