@@ -263,6 +263,7 @@ function phase_diagram(steps)
 end
 
 function phase_diagram_mn(steps)
+    mass = 20
     mass_vals = range(-mass, mass, length=steps*4)
     n_vals = [i for i in 1:steps if iseven(i)]
     M = zeros(length(mass_vals), length(n_vals))
@@ -281,12 +282,12 @@ function phase_diagram_mn(steps)
         e_elem = MPO(construct_electric(n_step, JNew), sitesNew)
         f_elem = MPO(construct_flux(n_step, L), sitesNew)
 
-        H_fixed = (wNew * H_hop_unit) + H_elec + H_flux
+        H_fixed = (wNew * c_elem) + e_elem + f_elem
         
         Threads.@threads :dynamic for j=1 : length(mass_vals)
             mass_step = mass_vals[j]
 
-            H = (mass_step * H_mass_unit) + H_fixed
+            H = (mass_step * m_elem) + H_fixed
             EGap = calc_energy_gap(n_step, F, C, sitesNew, H, false)
     
 
@@ -513,7 +514,7 @@ function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
 end
 
 let 
-    phase_diagram_mn(12)
+    phase_diagram_mn(16)
     # H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
     # calc_energy_gap(sites,H, true)
 
