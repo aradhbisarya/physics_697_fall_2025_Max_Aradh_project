@@ -263,12 +263,13 @@ function phase_diagram(steps)
 end
 
 function phase_diagram_mn(steps)
-    M = zeros(steps, steps * 4)
+    M = zeros(steps * 4, div(steps, 2))
     mass = 20
     mass_vals = range(-mass, mass, length=steps*4)
-    n_vals = 2:2:steps
+    n_vals = [i for i in 1:steps if iseven(i)]
+    print(n_vals)
 
-    p = Progress(steps * steps * 4, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+    p = Progress(steps * steps * 2, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
 
     Threads.@threads :dynamic for i=1 : length(n_vals)
         wNew = 1/(2*a*1)
@@ -288,9 +289,9 @@ function phase_diagram_mn(steps)
     
 
             if isnan(EGap[1])
-                M[i, j] = NaN
+                M[j, i] = NaN
             else
-                M[i, j] = EGap[2] - EGap[1]
+                M[j, i] = EGap[2] - EGap[1]
             end
 
             next!(p)
@@ -308,7 +309,7 @@ function phase_diagram_mn(steps)
         n_vals,  # Y-axis values
         data_trimmed,
         title = "Phase Diagram (Ground State Energy Gap)",
-        ylabel = "Coupling Strength",
+        ylabel = "site",
         xlabel = "Mass",
         na_color = :green,
         c = :viridis 
@@ -510,7 +511,7 @@ function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
 end
 
 let 
-    phase_diagram_mn(10)
+    phase_diagram_mn(4)
     # H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
     # calc_energy_gap(sites,H, true)
 
