@@ -263,28 +263,30 @@ function phase_diagram(steps)
 end
 
 function phase_diagram_mn(steps)
-    M = zeros(steps * 4, div(steps, 2))
-    mass = 20
     mass_vals = range(-mass, mass, length=steps*4)
     n_vals = [i for i in 1:steps if iseven(i)]
-    print(n_vals)
+    M = zeros(length(mass_vals), length(n_vals))
 
-    p = Progress(steps * steps * 2, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+    p = Progress(length(n_vals) * length(mass_vals), desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
 
-    Threads.@threads :dynamic for i=1 : length(n_vals)
+    for i=1 : length(n_vals)
+        n_step = n_vals[i]
+
         wNew = 1/(2*a*1)
         JNew = (a*1) / 2
-        n_step = n_vals[i]
         sitesNew = siteinds("S=1/2", (n_step*F*C), conserve_qns=true)
-        m_elem = construct_mass(n_step, F, C)
-        c_elem = construct_hopping(n_step, F, C)
-        e_elem = construct_electric(n_step, JNew)
-        f_elem = construct_flux(n_step, L)
+
+        m_elem = MPO(construct_mass(n_step, F, C), sitesNew)
+        c_elem = MPO(construct_hopping(n_step, F, C), sitesNew)
+        e_elem = MPO(construct_electric(n_step, JNew), sitesNew)
+        f_elem = MPO(construct_flux(n_step, L), sitesNew)
+
+        H_fixed = (wNew * H_hop_unit) + H_elec + H_flux
         
-        for j=1 : length(mass_vals)
+        Threads.@threads :dynamic for j=1 : length(mass_vals)
             mass_step = mass_vals[j]
-            mNew = mass_step
-            H = MPO((m_elem * mNew) + (c_elem * wNew) + e_elem + f_elem, sitesNew)
+
+            H = (mass_step * H_mass_unit) + H_fixed
             EGap = calc_energy_gap(n_step, F, C, sitesNew, H, false)
     
 
@@ -511,7 +513,7 @@ function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
 end
 
 let 
-    phase_diagram_mn(4)
+    phase_diagram_mn(12)
     # H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
     # calc_energy_gap(sites,H, true)
 
