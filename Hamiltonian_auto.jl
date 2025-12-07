@@ -9,7 +9,7 @@ BLAS.set_num_threads(1)
 ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
 
 #sites, flavors, colors
-N = 10
+N = 6
 F = 1
 C = 3
 
@@ -103,7 +103,7 @@ function BigLambda(n, f, i, j)
     return ret
 end 
 
-function QiNQiM(n, o, coeff)
+function QiNQiM(n, o)
     ret = []
     for i=2 : C 
         for j=1: i - 1
@@ -121,14 +121,7 @@ function QiNQiM(n, o, coeff)
         append!(ret, product(A, B))
     end
 
-    scaled_terms = []
-    for term in ret
-        new_coeff = term[1] * coeff
-
-        push!(scaled_terms, tuple(new_coeff, term[2:end]...))
-    end
-    
-    return scaled_terms
+    return ret
 end
 
 function plot_observables(psi, N, F, C) #AI generated plot
@@ -220,16 +213,23 @@ function phase_diagram(steps)
 
     p = Progress(steps * steps, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
 
+    m_elem = construct_mass(N, F, C)
+    c_elem = construct_hopping(N, F, C)
+
     Threads.@threads :dynamic for i=1 : steps
         mass_step = mass_vals[i]
         for j=1 : steps
+            mNew = mass_step/coupling_step
+            wNew = 1/(2*a*coupling_step)
+            JNew = (a*coupling_step) / 2
+
             coupling_step = coupling_vals[j]
             if abs(coupling_step) < 1e-6 
                 M[j, i] = NaN
                 next!(p)
                 continue
             end
-            H = construct_hamiltonian(sites, N, F, C, mass_step, a, coupling_step, L)
+            H = MPO((m_elem * mNew) + (c_elem * wNew) + construct_electric(N, JNew) + construct_flux(N, L), sites)
             EGap = calc_energy_gap(sites, H, false)
     
 
@@ -262,16 +262,65 @@ function phase_diagram(steps)
     display(hm)
 end
 
-function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
-    mNew = m0New/gNew
-    wNew = 1/(2*aNew*gNew)
-    JNew = (aNew*gNew) / 2
+function phase_diagram_mn(steps)
+    M = zeros(steps, steps * 4)
+    mass = 20
+    mass_vals = range(-mass, mass, length=steps*4)
+    n_vals = 2:2:steps
 
-    #Mass
+    p = Progress(steps * steps * 4, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+
+    Threads.@threads :dynamic for i=1 : length(n_vals)
+        wNew = 1/(2*a*1)
+        JNew = (a*1) / 2
+        n_step = n_vals[i]
+        sitesNew = siteinds("S=1/2", (n_step*F*C), conserve_qns=true)
+        m_elem = construct_mass(n_step, F, C)
+        c_elem = construct_hopping(n_step, F, C)
+        e_elem = construct_electric(n_step, JNew)
+        f_elem = construct_flux(n_step, L)
+        
+        for j=1 : length(mass_vals)
+            mass_step = mass_vals[j]
+            mNew = mass_step
+            H = MPO((m_elem * mNew) + (c_elem * wNew) + e_elem + f_elem, sitesNew)
+            EGap = calc_energy_gap(n_step, F, C, sitesNew, H, false)
+    
+
+            if isnan(EGap[1])
+                M[i, j] = NaN
+            else
+                M[i, j] = EGap[2] - EGap[1]
+            end
+
+            next!(p)
+        end
+    end
+    gr()
+
+    threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
+    data_trimmed = copy(M)
+    data_trimmed[data_trimmed .> threshold] .= NaN
+    print(M)
+
+    hm = heatmap(
+        mass_vals,      # X-axis values
+        n_vals,  # Y-axis values
+        data_trimmed,
+        title = "Phase Diagram (Ground State Energy Gap)",
+        ylabel = "Coupling Strength",
+        xlabel = "Mass",
+        na_color = :green,
+        c = :viridis 
+    )
+    display(hm)
+end
+
+function construct_mass(NNew, FNew, CNew)
     Mass = AutoMPO()
     for n=1: NNew 
         i = isodd(n) ? -1 : 1
-        coeff = mNew*i
+        coeff = i
         for f=1: FNew
             for c=1: CNew
                 Mass += coeff, "Sz", l(n, f, c) + 1
@@ -279,8 +328,10 @@ function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
             end
         end
     end
+    return Mass
+end
 
-    #Hopping
+function construct_hopping(NNew, FNew, CNew)
     Hopping = AutoMPO()
     for n=1: NNew-1
         for f=1: FNew
@@ -290,7 +341,7 @@ function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
                     s2 = l(n, f, c)
                     if i==1
                         temp = []
-                        coeff = wNew
+                        coeff = 1
                         addOp!(temp, "S+", s1 + 1)
                         for k=s2 : s1 - 1
                             coeff *= -2
@@ -301,7 +352,7 @@ function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
                         Hopping += tuple(temp...)
                     else
                         temp = []
-                        coeff = wNew
+                        coeff = 1
                         addOp!(temp, "S+", s2 + 1)
                         for k=s2 : s1 - 1
                             coeff *= -2
@@ -315,25 +366,32 @@ function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
             end
         end
     end
+    return Hopping
+end
 
-    #Electric
+function construct_electric(NNew, JNew)
     Electric = AutoMPO()
     for n=1 : NNew - 1
         coeff = (NNew) - n
-        for i in QiNQiM(n, n, JNew * coeff)
-            Electric += i
+        for i in QiNQiM(n, n)
+            new_coeff = i[1] * coeff * JNew
+            Electric += tuple(new_coeff, i[2:end]...)
         end
     end
     for n=1 : NNew - 2
         for o=n+1 : NNew - 1
             coeff = (NNew) - o
-            for i in QiNQiM(n, o, 2 * JNew * coeff)
-                Electric += i
+            for i in QiNQiM(n, o)
+                new_coeff = i[1] * 2 * JNew * coeff
+                Electric += tuple(new_coeff, i[2:end]...)
             end 
         end
     end
+    return Electric
 
-    #Flux
+end
+
+function construct_flux(NNew, LNew)
     Flux = AutoMPO()
     for n1=1: NNew
         for n2=1: NNew
@@ -342,18 +400,40 @@ function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
             end
         end
     end
+    return Flux
+end
+
+function construct_hamiltonian(sites, NNew, FNew, CNew, m0New, aNew, gNew, LNew)
+    mNew = m0New/gNew
+    wNew = 1/(2*aNew*gNew)
+    JNew = (aNew*gNew) / 2
+
+    #Mass
+    Mass = construct_mass(NNew, FNew, CNew, mNew) * mNew
+
+    #Hopping
+    
+    Hopping = construct_hopping(NNew, FNew, CNew) * wNew
+
+    #Electric
+    
+    Electric = construct_electric(NNew, JNew)
+
+    #Flux
+
+    Flux = construct_flux(NNew, LNew)
 
     return MPO(Hopping + Mass + Electric + Flux, sites)
 end
 
-function calc_energy_gap(sites, H, show)
-    nsweeps = 20 # number of sweeps
-    maxdim = [10,20,100,200, 400, 800, 2000, 4000] # gradually increase states kept
-    cutoff = [1E-12] # desired truncation error
-    noise = [1E-4, 1E-5, 1E-6, 1E-7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+function calc_energy_gap(NNew, FNew, CNew, sites, H, show)
+    nsweeps = 15 # number of sweeps
+    maxdim = [10,20,20, 100, 200, 200, 400, 800, 1000, 1000, 2000, 2000, 2000, 2000, 2000] # gradually increase states kept
+    cutoff = [1E-5, 1E-5, 1E-8, 1E-12] # desired truncation error
+    noise = [1E-4, 1E-5, 1E-6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     #noise = [1E-6, 1E-7, 1E-8, 0.0, 0.0, 0.0]
 
-    state_array = [isodd(div(x-1, F*C) + 1) ? "Up" : "Dn" for x in 1:(N*F*C)]
+    state_array = [isodd(div(x-1, F*C) + 1) ? "Up" : "Dn" for x in 1:(NNew*FNew*CNew)]
 
     psi = MPS(sites, state_array)
 
@@ -371,7 +451,7 @@ function calc_energy_gap(sites, H, show)
     successful_flip = false
 
     # Loop through every bond in the lattice to find a "flippable" pair
-    for b in 1 : (N*F*C - 1)
+    for b in 1 : (NNew*FNew*CNew - 1)
         # Try direction 1
         op1 = op("S+", sites[b])
         op2 = op("S-", sites[b+1])
@@ -429,9 +509,9 @@ function calc_energy_gap(sites, H, show)
 end
 
 let 
-    #phase_diagram(10)
-    H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
-    calc_energy_gap(sites,H, true)
+    phase_diagram_mn(8)
+    # H = construct_hamiltonian(sites, N, F, C, m0, a, g, L)
+    # calc_energy_gap(sites,H, true)
 
     # ret = []
     # for n=1: div(N,2)
