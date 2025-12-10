@@ -6,8 +6,8 @@ using ProgressMeter
 using LinearAlgebra
 using JLD2
 
-BLAS.set_num_threads(4)
-ITensors.Strided.set_num_threads(4) # Disable block-sparse multithreading
+BLAS.set_num_threads(1)
+ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
 
 struct ModelParams
     N::Int
