@@ -524,7 +524,7 @@ function phase_diagram_condensate(steps, p)
     M_charge = zeros(steps, steps)
     
     mass_range = range(-2.0, 2.0, length=steps)
-    g_range = range(0.1, 1.0, length=steps) # Avoid g=0 to prevent division by zero
+    g_range = range(0.1, 1.5, length=steps) # Avoid g=0 to prevent division by zero
     sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
     
     println("Starting Phase Diagram Scan...")
@@ -546,9 +546,9 @@ function phase_diagram_condensate(steps, p)
             m = mass_range[j] / g_range[i]
             H = (m_op * m) + H_fixed
             
-            DMRG Parameters
-            nsweeps = 10
-            maxdim = [10, 20, 50, 100, 200, 400, 1000]
+            #DMRG Parameters
+            nsweeps = 15
+            maxdim = [10, 20, 50, 100, 200, 400, 1000, 2000]
             noise = [1E-4, 1E-5, 0.0]
             cutoff = [1E-6, 1E-8, 1E-12]
             
@@ -640,10 +640,10 @@ end
 
 let 
 
-    params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0)
+    params = ModelParams(20, 1, 3, 1.0, 1.0, 20.0, 0)
     # phase_diagram_mn(16)
     # phase_diagram(20)
-    phase_diagram_condensate(2, params)
+    phase_diagram_condensate(40, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
