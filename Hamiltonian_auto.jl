@@ -252,7 +252,7 @@ function construct_hamiltonian(p, s)
     return Mass + Hopping + Electric
 end
 
-function measure_total_flux_squared(psi, p)
+function measure_total_flux_squared(p)
     if p.L == 0.0
         factor = 1.0
     else
@@ -275,12 +275,8 @@ function measure_total_flux_squared(psi, p)
         end
     end
     
-    flux_squared_op = MPO(os, siteinds(psi))
-    
-    val = inner(psi', flux_squared_op, psi)
-    
-    println("Total Outgoing Flux Squared <Q^2>: $val")
-    return val
+    # println("Total Outgoing Flux Squared <Q^2>: $val")
+    return os
 end
 
 function plot_observables(psi, N, F, C)
@@ -523,7 +519,7 @@ function phase_diagram_condensate(steps, p)
     M_condensate = zeros(steps, steps)
     M_charge = zeros(steps, steps)
     
-    mass_range = range(-2.0, 2.0, length=steps)
+    mass_range = range(-5.0, 5.0, length=steps)
     g_range = range(0.1, 1.5, length=steps) # Avoid g=0 to prevent division by zero
     sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
     
@@ -536,7 +532,8 @@ function phase_diagram_condensate(steps, p)
 
     p_meter = Progress(steps * steps, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
 
-    
+    os = measure_total_flux_squared(p) 
+
     Threads.@threads :dynamic for i in 1:steps
         w = 1.0 / (2 * p.a * g_range[i])
         J = (p.a * g_range[i]) / 2.0
@@ -557,7 +554,9 @@ function phase_diagram_condensate(steps, p)
 
             energy, psi0 = dmrg(H, psi_init; nsweeps, maxdim, cutoff, noise, outputlevel=0)
 
-            M_charge[j, i] = measure_total_flux_squared(psi0, p) 
+            flux_squared_op = MPO(os, siteinds(psi0))
+    
+            M_charge[j, i] = inner(psi0', flux_squared_op, psi0)
 
             #Measure Condensate
             val = measure_chiral_condensate(psi0, p)
@@ -640,7 +639,7 @@ end
 
 let 
 
-    params = ModelParams(20, 1, 3, 1.0, 1.0, 20.0, 0)
+    params = ModelParams(12, 1, 3, 1.0, 1.0, 20.0, 0)
     # phase_diagram_mn(16)
     # phase_diagram(20)
     phase_diagram_condensate(40, params)
