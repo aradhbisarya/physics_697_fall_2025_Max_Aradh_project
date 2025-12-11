@@ -6,8 +6,8 @@ using ProgressMeter
 using LinearAlgebra
 using JLD2
 
-BLAS.set_num_threads(1)
-ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
+BLAS.set_num_threads(2)
+ITensors.Strided.set_num_threads(2) # Disable block-sparse multithreading
 
 struct ModelParams
     N::Int
@@ -359,33 +359,40 @@ function number_op(psi, w, n, params)
     return inner(psi', MPO(num, siteinds(psi)), psi)
 end
 
-function phase_diagram(steps)
+function phase_diagram(steps, p)
     M = zeros(steps, steps)
-    mass = 1
-    coupling = 1
-    mass_vals = range(-mass, mass, length=steps)
-    coupling_vals = range(-coupling, coupling, length=steps)
+    mass = 5.0
+    coupling = 1.5
+    mass_vals = collect(range(-mass, mass, length=steps))
+    coupling_vals = range(0.1, coupling, length=steps)
 
-    p = Progress(steps * steps, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+    p_meter = Progress(steps * steps, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
 
-    m_elem = construct_mass(N, F, C)
-    c_elem = construct_hopping(N, F, C)
+    sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
 
-    Threads.@threads :dynamic for i=1 : steps
+    m_elem = construct_mass_op(sites, p)
+    c_elem = construct_hopping_op(sites, p)
+    e_elem = construct_electric_op(sites, p)
+
+    # os = measure_total_flux_squared(p)
+
+    for i=1 : steps
         mass_step = mass_vals[i]
-        for j=1 : steps
-            mNew = mass_step/coupling_step
-            wNew = 1/(2*a*coupling_step)
-            JNew = (a*coupling_step) / 2
 
+        Threads.@threads :dynamic for j=1 : steps
             coupling_step = coupling_vals[j]
+            mNew = mass_step/coupling_step
+            wNew = 1/(2*p.a*coupling_step)
+            JNew = (p.a*coupling_step) / 2
+
+
             if abs(coupling_step) < 1e-6 
                 M[j, i] = NaN
                 next!(p)
                 continue
             end
-            H = MPO((m_elem * mNew) + (c_elem * wNew) + construct_electric(N, JNew) + construct_flux(N, L), sites)
-            EGap = calc_energy_gap(sites, H, false)
+            H = (m_elem * mNew) + (c_elem * wNew) + (e_elem * JNew)
+            EGap = calc_energy_gap(p, sites, H, false)
     
 
             if isnan(EGap[1])
@@ -394,10 +401,9 @@ function phase_diagram(steps)
                 M[j, i] = EGap[2] - EGap[1]
             end
 
-            next!(p)
+            next!(p_meter)
         end
     end
-    gr()
 
     threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
     data_trimmed = copy(M)
@@ -414,7 +420,15 @@ function phase_diagram(steps)
         na_color = :green,
         c = :viridis 
     )
+
+    filename = "Energy_Gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+
+    jldsave(filename * ".jld2"; 
+    gaps = data_trimmed
+    )
+    savefig(filename * ".png")
     display(hm)
+    return data_trimmed
 end
 
 function phase_diagram_mn(steps)
@@ -492,6 +506,8 @@ function phase_diagram_mn(steps)
         na_color = :green,
         c = :viridis 
     )
+
+
     display(hm)
     return results
 end
@@ -534,6 +550,12 @@ function phase_diagram_condensate(steps, p)
 
     os = measure_total_flux_squared(p) 
 
+    #DMRG Parameters
+    nsweeps = 15
+    maxdim = [10, 20, 50, 100, 200, 400, 1000, 2000]
+    noise = [1E-4, 1E-5, 0.0]
+    cutoff = [1E-6, 1E-8, 1E-12]
+
     Threads.@threads :dynamic for i in 1:steps
         w = 1.0 / (2 * p.a * g_range[i])
         J = (p.a * g_range[i]) / 2.0
@@ -542,12 +564,6 @@ function phase_diagram_condensate(steps, p)
         for j in 1:steps
             m = mass_range[j] / g_range[i]
             H = (m_op * m) + H_fixed
-            
-            #DMRG Parameters
-            nsweeps = 15
-            maxdim = [10, 20, 50, 100, 200, 400, 1000, 2000]
-            noise = [1E-4, 1E-5, 0.0]
-            cutoff = [1E-6, 1E-8, 1E-12]
             
             state_array = [isodd(div(x-1, p.F*p.C) + 1) ? "Up" : "Dn" for x in 1:(p.N*p.F*p.C)]
             psi_init = random_mps(sites, state_array)
@@ -639,10 +655,10 @@ end
 
 let 
 
-    params = ModelParams(12, 1, 3, 1.0, 1.0, 20.0, 0)
+    params = ModelParams(6, 1, 2, 1.0, 1.0, 20.0, 0)
     # phase_diagram_mn(16)
-    # phase_diagram(20)
-    phase_diagram_condensate(40, params)
+    phase_diagram(20, params)
+    #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
