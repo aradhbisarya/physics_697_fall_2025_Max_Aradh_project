@@ -399,8 +399,8 @@ end
 
 function phase_diagram(steps, p)
     M = zeros(steps, steps)
-    mass = 1
-    theta = 1
+    mass = 10
+    theta = 50
     mass_vals = range(-mass, mass, length=steps)
     theta_vals = range(-theta, theta, length=steps)
 
@@ -454,8 +454,9 @@ function phase_diagram(steps, p)
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
     jldsave(filename * ".jld2"; 
-    data = data_trimmed,
+    data = data_trimmed
     )
+    savefig(filename * ".png")
     display(hm)
 end
 
@@ -684,9 +685,9 @@ end
 
 let 
 
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
-    phase_diagram(10, params)
+    phase_diagram(20, params)
     #phase_diagram_condensate(40, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
