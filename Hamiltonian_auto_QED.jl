@@ -6,8 +6,9 @@ using ProgressMeter
 using LinearAlgebra
 using JLD2
 
-BLAS.set_num_threads(4)
-ITensors.Strided.set_num_threads(4) # Disable block-sparse multithreading
+BLAS.set_num_threads(1)
+ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
+#ITensors.disable_threaded_blocksparse()
 
 struct ModelParams
     N::Int
@@ -164,12 +165,39 @@ function construct_hopping_op(sites, p::ModelParams)
     return MPO(os, sites)
 end
 
-function construct_electric_spin_op(sites, p::ModelParams, theta)
+function construct_electric_spin_op(sites, p::ModelParams)
     os = OpSum()
+    os_2 = OpSum()
 
-    function add_terms_locally!(terms, factor)
-        for t in terms
-            final_coeff = t.coeff * factor
+    for n=1 : p.N - 1
+        ops = Vector{SymTerm}()
+        k_coeff = -1.0
+        for k=1 : n
+            coeff = 0.5
+            for f=1 : p.F
+                for c=1 : p.C
+                    idx = l(k, f, c, p) + 1
+                    push!(ops, SymTerm(coeff, [SymOp("Sz", idx)]))
+                end 
+            end
+            coeff_2 = 0.5 * k_coeff * p.F * p.C
+            push!(ops, SymTerm(coeff_2, [SymOp("Id", l(k, 1, 1, p) + 1)]))
+            k_coeff *= -1.0
+        end
+        #construct linear term
+        for t in ops
+            final_coeff = t.coeff
+            if abs(final_coeff) > 1e-14
+                args = Any[final_coeff]
+                for op in t.ops
+                    push!(args, op.name, op.site)
+                end
+                os_2 += Tuple(args)
+            end
+        end
+        #construct quadratic term
+        for t in multiply_terms(ops, ops)
+            final_coeff = t.coeff
             if abs(final_coeff) > 1e-14
                 args = Any[final_coeff]
                 for op in t.ops
@@ -179,26 +207,7 @@ function construct_electric_spin_op(sites, p::ModelParams, theta)
             end
         end
     end
-
-    for n=1 : p.N - 1
-        ops = Vector{SymTerm}()
-        k_coeff = -1.0
-        for k=1 : n
-            coeff = 0.5
-            for f=1 : p.F
-                for c=1 : p.C
-                    coeff
-                    push!(ops, SymTerm(coeff, [SymOp("Sz", l(k, f, c, p) + 1)]))
-                    push!(ops, SymTerm(coeff * 0.5 * k_coeff * p.F * p.C, [SymOp("Id", l(k, f, c, p) + 1)]))
-                    push!(ops, SymTerm(theta / 2 * pi, [SymOp("Id", l(k, f, c, p) + 1)]))
-                end 
-            end
-            k_coeff *= -1.0
-        end
-        ops_2 = copy(ops)
-        add_terms_locally!(multiply_terms(ops, ops_2), 1)
-    end
-    return MPO(os, sites)
+    return MPO(os, sites), MPO(os_2, sites)
 end
 
 function construct_color_op(sites, p::ModelParams)
@@ -279,7 +288,8 @@ function construct_hamiltonian(p, s)
 
     #Electric
 
-    Electric = construct_electric_spin_op(sites, params) * J
+    Electric_quad, Electric_lin = construct_electric_spin_op(sites, params)
+    Electric = (Electric_quad * J) + (Electric_lin * (J * (p.theta / pi)))
 
     #Flux
     if p.L != 0.0
@@ -448,18 +458,18 @@ function phase_diagram(steps, p)
     m_op = construct_mass_op(sites, p)
     h_op  = construct_hopping_op(sites, p)
     c_op = construct_color_op(sites, p)
+    e_op_quad, e_op_lin = construct_electric_spin_op(sites, p)
 
     w = 1.0/(2*p.a * p.g)
     J = (p.a * p.g) / 2.0
-    H_init = (h_op * w) + (c_op * J)
+    H_init = (h_op * w) + (c_op * J) + (e_op_quad * J)
 
     for i=1 : steps
         mass_step = mass_vals[i]
         H_fixed = (m_op * mass_step) + H_init
         Threads.@threads :dynamic for j=1 : steps
             theta_step = theta_vals[j]
-            e_op = construct_electric_spin_op(sites, p, theta_step)
-            H = H_fixed + (e_op * J)
+            H = H_fixed + (e_op_lin * (J * (theta_step / pi)))
             gaps = calc_energy_gap(p, sites, H, false)
     
             if isnan(gaps[1])
@@ -526,11 +536,12 @@ function phase_diagram_mn(steps)
 
         m_op = construct_mass_op(local_sites, params)
         h_op  = construct_hopping_op(local_sites, params)
-        e_op = construct_color_op(local_sites, params)
+        c_op = construct_color_op(local_sites, params)
+        e_op_quad, e_op_lin = construct_electric_spin_op(local_sites, params)
         #f_op = construct_flux_op(local_sites, params)
 
 
-        H_fixed = (w * h_op) + e_op * J
+        H_fixed = (w * h_op) + (c_op * J) + (e_op_quad * J) + (e_op_lin * (J * (p.theta / pi)))
         
         Threads.@threads :dynamic for j in 1:length(mass_vals)
             mass_step = mass_vals[j]
@@ -612,6 +623,7 @@ function phase_diagram_condensate(steps, p)
     m_op = construct_mass_op(sites, p)
     h_op  = construct_hopping_op(sites, p)
     c_op = construct_color_op(sites, p)
+    e_op_quad, e_op_lin = construct_electric_spin_op(sites, p)
     #f_op = construct_flux_op(sites, params)
 
     p_meter = Progress(steps * steps, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
@@ -627,8 +639,8 @@ function phase_diagram_condensate(steps, p)
     Threads.@threads :dynamic for i in 1:steps
         w = 1.0 / (2 * p.a * p.g)
         J = (p.a * p.g) / 2.0
-        e_op = construct_electric_spin_op(sites, p, theta_range[i])
-        H_fixed = (h_op * w) + (e_op * J) + (c_op * J)
+        
+        H_fixed = (h_op * w) + (e_op_quad * J) + (e_op_lin * (J * (theta_range[i]/pi))) + (c_op * J)
         for j in 1:steps
             m = mass_range[j] / p.g
             H = (m_op * m) + H_fixed
@@ -725,10 +737,10 @@ function calc_energy_gap(p::ModelParams, sites, H, show_output::Bool)
 end
 
 let 
-    params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
-    #phase_diagram(20, params)
-    phase_diagram_condensate(20, params)
+    phase_diagram(6, params)
+    #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
