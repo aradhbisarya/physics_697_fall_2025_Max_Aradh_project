@@ -4,7 +4,7 @@ using Printf
 using JLD2
 
 if nprocs() == 1
-    addprocs(max(1, Sys.CPU_THREADS - 17))
+    addprocs(max(1, Sys.CPU_THREADS - 2))
     println("Added workers, total processes: $(nprocs())")
 end
 
@@ -14,8 +14,8 @@ end
     using LinearAlgebra
     using ProgressMeter
 
-    BLAS.set_num_threads(3)
-    ITensors.Strided.set_num_threads(3) # Disable block-sparse multithreading
+    BLAS.set_num_threads(1)
+    ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
     #ITensors.disable_threaded_blocksparse()
 
     struct ModelParams
@@ -65,7 +65,7 @@ end
             OPERATOR_CACHE["Flux"] = construct_flux_op(sites, p)
         end
 
-        # OPERATOR_CACHE["Flux_measure"] = MPO(measure_total_flux_squared(p), sites)
+        OPERATOR_CACHE["Flux_measure"] = MPO(measure_total_flux_squared(p), sites)
 
         println("Worker $(myid()) ready!")
     end
@@ -94,11 +94,11 @@ end
 
         gaps, psi0 = calc_energy_gap(p, sites, H, false)
 
-        # flux_op = OPERATOR_CACHE["Flux_measure"]
-        # val_charge = inner(psi0', flux_op, psi0)
-        # val_condensate = measure_chiral_condensate(psi0, p)
+        flux_op = OPERATOR_CACHE["Flux_measure"]
+        val_charge = inner(psi0', flux_op, psi0)
+        val_condensate = measure_chiral_condensate(psi0, p)
         GC.gc()
-        return (gaps)
+        return (val_condensate, val_charge, gaps)
     end
 
     #Helper functions
@@ -605,14 +605,14 @@ function phase_diagram_cached(steps, p)
     # C. PLOTTING
     # ===========
     M = zeros(steps, steps)
-    # M_condensate = zeros(steps, steps)
-    # M_charge = zeros(steps, steps)
+    M_condensate = zeros(steps, steps)
+    M_charge = zeros(steps, steps)
     
     for (idx, res) in zip(tasks, results)
         i, j = idx.I
-        # M_condensate[j, i] = res[2]
-        # M_charge[j, i] = res[3]
-        gaps = res[1]
+        M_condensate[j, i] = res[1]
+        M_charge[j, i] = res[2]
+        gaps = res[3]
 
         if isnan(gaps[1])
             M[j, i] = NaN
@@ -646,28 +646,28 @@ function phase_diagram_cached(steps, p)
     savefig(filename * ".png")
     display(hm)
 
-    # plot = heatmap(mass_range, theta_range, M_condensate', 
-    # title = "Chiral Condensate Phase Diagram",
-    # xlabel = "Mass Parameter (m)",
-    # ylabel = "Theta",
-    # color = :viridis, # Thermal is good for 0 to 1 intensity
-    # dpi = 300
-    # )
-    # filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    plot = heatmap(mass_vals, theta_vals, M_condensate', 
+    title = "Chiral Condensate Phase Diagram",
+    xlabel = "Mass Parameter (m)",
+    ylabel = "Theta",
+    color = :viridis, # Thermal is good for 0 to 1 intensity
+    dpi = 300
+    )
+    filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
-    # jldsave(filename * ".jld2"; 
-    # M_condensate = M_condensate,
-    # M_charge = M_charge
-    # )
-    # savefig(filename * ".png")
-    # plot2 = heatmap(mass_range, theta_range, M_charge', 
-    # title = "Chiral Condensate Phase Diagram (charge)",
-    # xlabel = "Mass Parameter (m)",
-    # ylabel = "Theta",
-    # color = :viridis,
-    # dpi = 300
-    # )
-    # savefig(filename * "_charge" * ".png")
+    jldsave(filename * ".jld2"; 
+    M_condensate = M_condensate,
+    M_charge = M_charge
+    )
+    savefig(filename * ".png")
+    plot2 = heatmap(mass_vals, theta_vals, M_charge', 
+    title = "Chiral Condensate Phase Diagram (charge)",
+    xlabel = "Mass Parameter (m)",
+    ylabel = "Theta",
+    color = :viridis,
+    dpi = 300
+    )
+    savefig(filename * "_charge" * ".png")
 
     return M
 end
@@ -902,9 +902,9 @@ function phase_diagram_condensate(steps, p)
 end
 
 let 
-    params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
-    phase_diagram_cached(20, params)
+    phase_diagram_cached(6, params)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
