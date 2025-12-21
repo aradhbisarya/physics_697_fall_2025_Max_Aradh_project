@@ -6,8 +6,8 @@ using ProgressMeter
 using LinearAlgebra
 using JLD2
 
-BLAS.set_num_threads(1)
-ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
+BLAS.set_num_threads(4)
+ITensors.Strided.set_num_threads(4) # Disable block-sparse multithreading
 #ITensors.disable_threaded_blocksparse()
 
 struct ModelParams
@@ -486,7 +486,7 @@ function phase_diagram(steps, p)
     data_trimmed = copy(M)
     data_trimmed[data_trimmed .> threshold] .= NaN
 
-    hm = contourf(
+    hm = heatmap(
         mass_vals,      # X-axis values
         theta_vals,  # Y-axis values
         data_trimmed,
@@ -495,7 +495,6 @@ function phase_diagram(steps, p)
         xlabel = "Mass",
         na_color = :green,
         color = :viridis,
-        levels = 20,
         dpi = 300
     )
 
@@ -575,7 +574,7 @@ function phase_diagram_mn(steps)
 
     # ... proceed to plotting ...
 
-    hm = contourf(
+    hm = heatmap(
         mass_vals,      # X-axis values
         n_vals,  # Y-axis values
         results_to_save',
@@ -584,7 +583,6 @@ function phase_diagram_mn(steps)
         xlabel = "Mass",
         na_color = :green,
         color = :viridis,
-        levels = 20,
         dpi = 300
     )
     display(hm)
@@ -665,12 +663,11 @@ function phase_diagram_condensate(steps, p)
     end
 
     # Plotting
-    plot = contourf(mass_range, theta_range, M_condensate', 
+    plot = heatmap(mass_range, theta_range, M_condensate', 
         title = "Chiral Condensate Phase Diagram",
         xlabel = "Mass Parameter (m)",
         ylabel = "Theta",
-        color = :thermal, # Thermal is good for 0 to 1 intensity
-        levels = 20,      # Smoothness
+        color = :viridis, # Thermal is good for 0 to 1 intensity
         dpi = 300
     )
     filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
@@ -680,7 +677,7 @@ function phase_diagram_condensate(steps, p)
     M_charge = M_charge
     )
     savefig(filename * ".png")
-    plot2 = contourf(mass_range, theta_range, M_charge', 
+    plot2 = heatmap(mass_range, theta_range, M_charge', 
     title = "Chiral Condensate Phase Diagram (charge)",
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
@@ -737,9 +734,9 @@ function calc_energy_gap(p::ModelParams, sites, H, show_output::Bool)
 end
 
 let 
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
-    phase_diagram(6, params)
+    phase_diagram(20, params)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
