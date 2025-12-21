@@ -419,7 +419,11 @@ function phase_diagram(steps, p)
     for i=1 : steps
         mass_step = mass_vals[i]
         H_fixed = (m_op * mass_step) + H_init
+<<<<<<< HEAD
         Threads.@threads :dynamic for j=1 : steps
+=======
+        for j=1 : steps
+>>>>>>> refs/remotes/origin/main
             theta_step = theta_vals[j]
             e_op = construct_electric_spin_op(sites, p, theta_step)
             H = H_fixed + (e_op * J)
@@ -477,7 +481,7 @@ function phase_diagram_mn(steps)
     for i in 1:length(n_vals)
         local_n = n_vals[i]
 
-        params = ModelParams(local_n, F, C, a_val, g_val, m0_val, L_val)
+        params = ModelParams(local_n, F, C, a_val, g_val, m0_val, L_val, 1)
 
         # Constants
         w = 1.0 / (2 * params.a * params.g)
@@ -684,10 +688,17 @@ end
 
 let 
 
+<<<<<<< HEAD
     params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
     #phase_diagram(20, params)
     phase_diagram_condensate(20, params)
+=======
+    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    #phase_diagram_mn(6)
+    phase_diagram(10, params)
+    #phase_diagram_condensate(40, params)
+>>>>>>> refs/remotes/origin/main
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
