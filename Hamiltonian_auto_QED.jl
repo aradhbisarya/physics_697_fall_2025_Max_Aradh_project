@@ -189,7 +189,7 @@ function construct_electric_spin_op(sites, p::ModelParams, theta)
                 for c=1 : p.C
                     coeff
                     push!(ops, SymTerm(coeff, [SymOp("Sz", l(k, f, c, p) + 1)]))
-                    push!(ops, SymTerm(coeff * 0.5 * k_coeff * p.N * p.C, [SymOp("Id", l(k, f, c, p) + 1)]))
+                    push!(ops, SymTerm(coeff * 0.5 * k_coeff * p.F * p.C, [SymOp("Id", l(k, f, c, p) + 1)]))
                     push!(ops, SymTerm(theta / 2 * pi, [SymOp("Id", l(k, f, c, p) + 1)]))
                 end 
             end
