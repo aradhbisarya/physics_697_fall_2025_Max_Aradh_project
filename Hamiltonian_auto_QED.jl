@@ -190,7 +190,7 @@ function construct_electric_spin_op(sites, p::ModelParams, theta)
                     coeff
                     push!(ops, SymTerm(coeff, [SymOp("Sz", l(k, f, c, p) + 1)]))
                     push!(ops, SymTerm(coeff * 0.5 * k_coeff * p.N * p.C, [SymOp("Id", l(k, f, c, p) + 1)]))
-                    push!(ops, SymTerm(div(theta, 2 * pi), [SymOp("Id", l(k, f, c, p) + 1)]))
+                    push!(ops, SymTerm(theta / 2 * pi, [SymOp("Id", l(k, f, c, p) + 1)]))
                 end 
             end
             k_coeff *= -1.0
@@ -400,7 +400,7 @@ end
 function phase_diagram(steps, p)
     M = zeros(steps, steps)
     mass = 10
-    theta = 50
+    theta = 5
     mass_vals = range(-mass, mass, length=steps)
     theta_vals = range(-theta, theta, length=steps)
 
@@ -640,10 +640,10 @@ function phase_diagram_condensate(steps, p)
 end
 
 function calc_energy_gap(p::ModelParams, sites, H, show_output::Bool)
-    nsweeps = 15
+    nsweeps = 100
     maxdim = [10, 20, 50, 100, 200, 400, 800, 1000, 2000, 4000]
-    cutoff = [1E-6, 1E-8, 1E-10, 1E-12]
-    noise = [1E-4, 1E-5, 1E-6, 1E-8, 0.0]
+    cutoff = [1E-6, 1E-8, 1E-8, 1E-10, 1E-10, 1E-12]
+    noise = [1E-4, 1E-4, 1E-5, 1E-5, 1E-6, 1E-8, 0.0]
 
     total_sites = length(sites)
     state_array = [isodd(div(x-1, p.F * p.C) + 1) ? "Up" : "Dn" for x in 1:total_sites]
