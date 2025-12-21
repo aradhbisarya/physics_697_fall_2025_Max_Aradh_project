@@ -283,8 +283,8 @@ function construct_hamiltonian(p, s)
 
     #Flux
     if p.L != 0.0
-        Flux = construct_flux_op(sites, params) * L
-        return Mass + Hopping + Electric + Flux
+        Flux = construct_flux_op(sites, params) * p.L
+        return Mass + Hopping + Electric + Color + Flux
     end
 
     return Mass + Hopping + Electric + Color
@@ -317,36 +317,57 @@ function measure_total_flux_squared(p)
     return os
 end
 
-function plot_observables(psi, N, F, C)
-    # Calculate expectation value of Sz at every site
+function plot_observables(psi, p::ModelParams)
     sz = expect(psi, "Sz") 
     
-    # Initialize a plot
-    p = plot(title="Local Magnetization <Sz>", xlabel="Lattice Site (n)", ylabel="<Sz>")
+    # Initialize plot
+    plt = plot(title="Local Magnetization <Sz>", 
+             xlabel="Physical Lattice Site (n)", 
+             ylabel="<Sz>",
+             legend=:outertopright)
     
-    # Loop through "Colors" (C) and plot them as separate series
-    for c_idx = 1:C
-        # Extract only the indices corresponding to this color
-        # We reconstruct the linear index: l(n, c) + 1
-        indices = [((n-1)*F*C) + c_idx - 1 + 1 for n in 1:N]
-        
-        # Plot this subset
-        plot!(p, 1:N, sz[indices], label="Color $c_idx", marker=:circle)
+    # Loop over Flavors and Colors
+    # Assuming the mapping is: (n-1)*F*C + (f-1)*C + c
+    markers = [:circle, :square, :diamond] # Different shapes for flavors
+    
+    for f in 1:p.F
+        for c in 1:p.C
+            # Extract indices for this specific flavor/color combination
+            indices = [l(n, f, c, p) + 1 for n in 1:p.N]
+            
+            label_str = "F=$f, C=$c"
+            
+            plot!(plt, 1:p.N, sz[indices], 
+                label=label_str, 
+                marker=markers[mod1(f, 3)], 
+                linewidth=1.5,
+                alpha=0.8
+            )
+        end
     end
-    display(p)
+    
+    # Add a zero line for reference
+    hline!(plt, [0.0], color=:black, linestyle=:dash, label=nothing)
+    
+    display(plt)
 end
 
 function plot_correlations(psi) 
-    # specific operators
     M = correlation_matrix(psi, "Sz", "Sz")
     
-    # Plot as a heatmap
+    # Mask the diagonal to see off-diagonal structure
+    for i in 1:size(M,1)
+        M[i,i] = NaN
+    end
+
     hm = heatmap(M, 
         title="Spin-Spin Correlation <Sz_i Sz_j>", 
         xlabel="Site j", 
         ylabel="Site i",
-        color=:viridis,
-        aspect_ratio=:equal
+        color=:balance, # Diverging colormap
+        clims=(-0.25, 0.25), # Fix scale to max possible range
+        aspect_ratio=:equal,
+        yflip=true # Matrix convention (index 1 at top)
     )
     display(hm)
 end
@@ -376,14 +397,30 @@ function plot_entanglement(psi, N_total)
         push!(entropies, Sv)
     end
 
-    p = plot(entropies, 
+    # Create the plot
+    plt = plot(entropies, 
         title="Entanglement Entropy (Von Neumann)", 
-        xlabel="Bond Cut", 
+        xlabel="Bond Index", 
         ylabel="Entropy S_vn", 
         legend=false,
-        fill=(0, 0.2, :blue) # Fill area under curve
+        linewidth=2,
+        color=:blue,
+        fill=(0, 0.2, :blue)
     )
-    display(p)
+
+    # Add vertical lines to show physical site boundaries
+    # Each physical site has F*C tensors
+    internal_dim = p.F * p.C
+    boundary_indices = internal_dim:internal_dim:(length(entropies)-1)
+
+    vline!(plt, boundary_indices, 
+        linestyle=:dash, 
+        color=:gray, 
+        alpha=0.5, 
+        label="Site Boundary"
+    )
+
+    display(plt)
 end
 
 function number_op(psi, w, n, params)
@@ -419,11 +456,7 @@ function phase_diagram(steps, p)
     for i=1 : steps
         mass_step = mass_vals[i]
         H_fixed = (m_op * mass_step) + H_init
-<<<<<<< HEAD
         Threads.@threads :dynamic for j=1 : steps
-=======
-        for j=1 : steps
->>>>>>> refs/remotes/origin/main
             theta_step = theta_vals[j]
             e_op = construct_electric_spin_op(sites, p, theta_step)
             H = H_fixed + (e_op * J)
@@ -442,9 +475,8 @@ function phase_diagram(steps, p)
     threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
     data_trimmed = copy(M)
     data_trimmed[data_trimmed .> threshold] .= NaN
-    print(M)
 
-    hm = heatmap(
+    hm = contourf(
         mass_vals,      # X-axis values
         theta_vals,  # Y-axis values
         data_trimmed,
@@ -452,7 +484,9 @@ function phase_diagram(steps, p)
         ylabel = "Theta",
         xlabel = "Mass",
         na_color = :green,
-        c = :viridis 
+        color = :viridis,
+        levels = 20,
+        dpi = 300
     )
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
@@ -462,6 +496,7 @@ function phase_diagram(steps, p)
     )
     savefig(filename * ".png")
     display(hm)
+    return data_trimmed
 end
 
 function phase_diagram_mn(steps)
@@ -529,7 +564,7 @@ function phase_diagram_mn(steps)
 
     # ... proceed to plotting ...
 
-    hm = heatmap(
+    hm = contourf(
         mass_vals,      # X-axis values
         n_vals,  # Y-axis values
         results_to_save',
@@ -537,7 +572,9 @@ function phase_diagram_mn(steps)
         ylabel = "Sites (N)",
         xlabel = "Mass",
         na_color = :green,
-        c = :viridis 
+        color = :viridis,
+        levels = 20,
+        dpi = 300
     )
     display(hm)
     return results
@@ -616,12 +653,13 @@ function phase_diagram_condensate(steps, p)
     end
 
     # Plotting
-    plot = heatmap(mass_range, g_range, M_condensate', 
+    plot = contourf(mass_range, theta_range, M_condensate', 
         title = "Chiral Condensate Phase Diagram",
         xlabel = "Mass Parameter (m)",
         ylabel = "Theta",
-        color = :viridis,
-        aspect_ratio = :auto # Allows the plot to stretch to fill the window
+        color = :thermal, # Thermal is good for 0 to 1 intensity
+        levels = 20,      # Smoothness
+        dpi = 300
     )
     filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
@@ -630,12 +668,12 @@ function phase_diagram_condensate(steps, p)
     M_charge = M_charge
     )
     savefig(filename * ".png")
-    plot2 = heatmap(mass_range, g_range, M_charge', 
+    plot2 = contourf(mass_range, theta_range, M_charge', 
     title = "Chiral Condensate Phase Diagram (charge)",
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
     color = :viridis,
-    aspect_ratio = :auto # Allows the plot to stretch to fill the window
+    dpi = 300
     )
     savefig(filename * "_charge" * ".png")
     display(plot)
@@ -687,18 +725,10 @@ function calc_energy_gap(p::ModelParams, sites, H, show_output::Bool)
 end
 
 let 
-
-<<<<<<< HEAD
     params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
     #phase_diagram(20, params)
     phase_diagram_condensate(20, params)
-=======
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
-    #phase_diagram_mn(6)
-    phase_diagram(10, params)
-    #phase_diagram_condensate(40, params)
->>>>>>> refs/remotes/origin/main
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
