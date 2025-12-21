@@ -6,8 +6,8 @@ using ProgressMeter
 using LinearAlgebra
 using JLD2
 
-BLAS.set_num_threads(1)
-ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
+BLAS.set_num_threads(4)
+ITensors.Strided.set_num_threads(4) # Disable block-sparse multithreading
 
 struct ModelParams
     N::Int
@@ -399,10 +399,10 @@ end
 
 function phase_diagram(steps, p)
     M = zeros(steps, steps)
-    mass = 10
-    theta = 5
-    mass_vals = range(-mass, mass, length=steps)
-    theta_vals = range(-theta, theta, length=steps)
+    mass = 10.0
+    theta = 6
+    mass_vals = collect(range(-mass, mass, length=steps))
+    theta_vals = range(0, theta, length=steps)
 
     p_meter = Progress(steps * steps, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
 
@@ -412,14 +412,14 @@ function phase_diagram(steps, p)
     h_op  = construct_hopping_op(sites, p)
     c_op = construct_color_op(sites, p)
 
-    w = 1/(2*p.a * p.g)
-    J = (p.a * p.g) / 2
+    w = 1.0/(2*p.a * p.g)
+    J = (p.a * p.g) / 2.0
     H_init = (h_op * w) + (c_op * J)
 
-    Threads.@threads :dynamic for i=1 : steps
+    for i=1 : steps
         mass_step = mass_vals[i]
-        H_fixed = (m_op * mass_step)
-        for j=1 : steps
+        H_fixed = (m_op * mass_step) + H_init
+        Threads.@threads :dynamic for j=1 : steps
             theta_step = theta_vals[j]
             e_op = construct_electric_spin_op(sites, p, theta_step)
             H = H_fixed + (e_op * J)
@@ -563,7 +563,7 @@ function phase_diagram_condensate(steps, p)
     M_charge = zeros(steps, steps)
     
     mass_range = range(-10.0, 10.0, length=steps)
-    g_range = range(0.01, 1.0, length=steps) # Avoid g=0 to prevent division by zero
+    theta_range = range(0.01, 6.0, length=steps) 
     sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
     
     println("Starting Phase Diagram Scan...")
@@ -571,7 +571,6 @@ function phase_diagram_condensate(steps, p)
     m_op = construct_mass_op(sites, p)
     h_op  = construct_hopping_op(sites, p)
     c_op = construct_color_op(sites, p)
-    e_op = construct_electric_spin_op(sites, p)
     #f_op = construct_flux_op(sites, params)
 
     p_meter = Progress(steps * steps, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
@@ -585,12 +584,12 @@ function phase_diagram_condensate(steps, p)
     cutoff = [1E-6, 1E-8, 1E-12]
 
     Threads.@threads :dynamic for i in 1:steps
-        w = 1.0 / (2 * p.a * g_range[i])
-        J = (p.a * g_range[i]) / 2.0
-       
+        w = 1.0 / (2 * p.a * p.g)
+        J = (p.a * p.g) / 2.0
+        e_op = construct_electric_spin_op(sites, p, theta_range[i])
         H_fixed = (h_op * w) + (e_op * J) + (c_op * J)
         for j in 1:steps
-            m = mass_range[j] / g_range[i]
+            m = mass_range[j] / p.g
             H = (m_op * m) + H_fixed
             
             state_array = [isodd(div(x-1, p.F*p.C) + 1) ? "Up" : "Dn" for x in 1:(p.N*p.F*p.C)]
@@ -616,7 +615,7 @@ function phase_diagram_condensate(steps, p)
     plot = heatmap(mass_range, g_range, M_condensate', 
         title = "Chiral Condensate Phase Diagram",
         xlabel = "Mass Parameter (m)",
-        ylabel = "Coupling Constant (g)",
+        ylabel = "Theta",
         color = :viridis,
         aspect_ratio = :auto # Allows the plot to stretch to fill the window
     )
@@ -630,7 +629,7 @@ function phase_diagram_condensate(steps, p)
     plot2 = heatmap(mass_range, g_range, M_charge', 
     title = "Chiral Condensate Phase Diagram (charge)",
     xlabel = "Mass Parameter (m)",
-    ylabel = "Coupling Constant (g)",
+    ylabel = "Theta",
     color = :viridis,
     aspect_ratio = :auto # Allows the plot to stretch to fill the window
     )
@@ -640,10 +639,10 @@ function phase_diagram_condensate(steps, p)
 end
 
 function calc_energy_gap(p::ModelParams, sites, H, show_output::Bool)
-    nsweeps = 100
+    nsweeps = 15
     maxdim = [10, 20, 50, 100, 200, 400, 800, 1000, 2000, 4000]
-    cutoff = [1E-6, 1E-8, 1E-8, 1E-10, 1E-10, 1E-12]
-    noise = [1E-4, 1E-4, 1E-5, 1E-5, 1E-6, 1E-8, 0.0]
+    cutoff = [1E-6, 1E-8, 1E-10, 1E-12]
+    noise = [1E-4, 1E-5, 1E-6, 1E-8, 0.0]
 
     total_sites = length(sites)
     state_array = [isodd(div(x-1, p.F * p.C) + 1) ? "Up" : "Dn" for x in 1:total_sites]
@@ -687,8 +686,8 @@ let
 
     params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
-    phase_diagram(20, params)
-    #phase_diagram_condensate(40, params)
+    #phase_diagram(20, params)
+    phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
