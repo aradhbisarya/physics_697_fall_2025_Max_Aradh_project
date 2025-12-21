@@ -97,7 +97,7 @@ end
         # flux_op = OPERATOR_CACHE["Flux_measure"]
         # val_charge = inner(psi0', flux_op, psi0)
         # val_condensate = measure_chiral_condensate(psi0, p)
-
+        GC.gc()
         return (gaps)
     end
 
