@@ -132,7 +132,8 @@ Pkg.add([
     "Plots",
     "JLD2",
     "ProgressMeter",
-    "Distributed"
+    "Distributed",
+    "PlotlyJS"
 ])
 
 '''
