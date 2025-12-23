@@ -569,8 +569,10 @@ function plot_entanglement(p::ModelParams, filename)
     all_entropies = Vector{Float64}[] 
     site_indices = Int[]
 
+    lin_map = LinearIndices(psi)
+
     for (idx, res) in zip(tasks, results)
-        site = (idx[1] - 1) + idx[2]
+        site = lin_map[idx]
 
         push!(all_entropies, res)
         push!(site_indices, site)
@@ -922,11 +924,11 @@ function phase_diagram_condensate(steps, p)
 end
 
 let 
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(10, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # phase_diagram_mn(16)
-    phase_diagram_cached(6, params)
-    plot_entanglement(params, filename)
+    phase_diagram_cached(100, params)
+    #plot_entanglement(params, filename)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
