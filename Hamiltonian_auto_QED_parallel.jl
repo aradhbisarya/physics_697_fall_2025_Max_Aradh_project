@@ -592,8 +592,8 @@ function phase_diagram_cached(steps, p)
     
     # B. RUN PARAMETER SWEEP
     # ======================
-    mass_vals = collect(range(-10.0, 10.0, length=steps))
-    theta_vals = collect(range(0.01, 6.0, length=steps))
+    mass_vals = collect(range(-100.0, 100.0, length=steps))
+    theta_vals = collect(range(0.01, 100.0, length=steps))
     tasks = collect(CartesianIndices((steps, steps)))
     
     results = @showprogress pmap(tasks) do idx
@@ -674,8 +674,8 @@ end
 
 function phase_diagram(steps, p)
     M = zeros(steps, steps)
-    mass = 10.0
-    theta = 6
+    mass = 1000.0
+    theta = 100
     mass_vals = collect(range(-mass, mass, length=steps))
     theta_vals = range(0, theta, length=steps)
 
@@ -904,7 +904,7 @@ end
 let 
     params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     # phase_diagram_mn(16)
-    phase_diagram_cached(6, params)
+    phase_diagram_cached(100, params)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
