@@ -474,6 +474,142 @@ end
         end
         return baryon_number
     end
+    function calc_entanglement(p::ModelParams, psi)
+        entropies = Float64[]
+        # Orthogonalize to the first site to start
+        orthogonalize!(psi, 1)
+        
+        for b in 1:(p.N-1)
+            # Singular Value Decomposition at bond b
+            # ITensor manages the orthogonality center automatically if you move sequentially
+            orthogonalize!(psi, b)
+            
+            # Get the singular values (spectrum of the density matrix)
+            _, S, _ = svd(psi[b], (linkinds(psi, b-1)..., siteinds(psi, b)...))
+            
+            # Calculate Von Neumann Entropy: - sum(p * log(p))
+            Sv = 0.0
+            for n in 1:dim(S, 1)
+                p = S[n, n]^2
+                if p > 1e-12 # Avoid log(0)
+                    Sv -= p * log(p)
+                end
+            end
+            push!(entropies, Sv)
+        end
+
+        return entropies
+    end
+
+end
+function plot_observables(psi, p::ModelParams)
+    sz = expect(psi, "Sz") 
+    
+    # Initialize plot
+    plt = plot(title="Local Magnetization <Sz>", 
+             xlabel="Physical Lattice Site (n)", 
+             ylabel="<Sz>",
+             legend=:outertopright)
+    
+    # Loop over Flavors and Colors
+    # Assuming the mapping is: (n-1)*F*C + (f-1)*C + c
+    markers = [:circle, :square, :diamond] # Different shapes for flavors
+    
+    for f in 1:p.F
+        for c in 1:p.C
+            # Extract indices for this specific flavor/color combination
+            indices = [l(n, f, c, p) + 1 for n in 1:p.N]
+            
+            label_str = "F=$f, C=$c"
+            
+            plot!(plt, 1:p.N, sz[indices], 
+                label=label_str, 
+                marker=markers[mod1(f, 3)], 
+                linewidth=1.5,
+                alpha=0.8
+            )
+        end
+    end
+    
+    # Add a zero line for reference
+    hline!(plt, [0.0], color=:black, linestyle=:dash, label=nothing)
+    
+    display(plt)
+end
+
+function plot_correlations(psi) 
+    M = correlation_matrix(psi, "Sz", "Sz")
+    
+    # Mask the diagonal to see off-diagonal structure
+    for i in 1:size(M,1)
+        M[i,i] = NaN
+    end
+
+    hm = heatmap(M, 
+        title="Spin-Spin Correlation <Sz_i Sz_j>", 
+        xlabel="Site j", 
+        ylabel="Site i",
+        color=:balance, # Diverging colormap
+        clims=(-0.25, 0.25), # Fix scale to max possible range
+        aspect_ratio=:equal,
+        yflip=true # Matrix convention (index 1 at top)
+    )
+    display(hm)
+end
+
+function number_op(psi, w, n, params)
+    num = AutoMPO()
+
+    for c=1: C
+        num += (w/2), "Sz", l(2*n, 1, c, params) + 1
+        num += (w/2), "Sz", l((2*n)-1, 1, c, params) + 1
+    end
+
+    return inner(psi', MPO(num, siteinds(psi)), psi)
+end
+
+function plot_entanglement(p::ModelParams, filename)
+    load_name = filename * ".JLD2"
+    @load load_name psi
+    site = 0
+
+    tasks = collect(CartesianIndices((size(psi, 1), size(psi, 2))))
+    
+    results = @showprogress pmap(tasks) do idx
+        i, j = idx.I
+        return calc_entanglement(p, psi[i, j])
+    end
+    plotlyjs()
+
+    all_entropies = Vector{Float64}[] 
+    site_indices = Int[]
+
+    for (idx, res) in zip(tasks, results)
+        site = (idx[1] - 1) + idx[2]
+
+        push!(all_entropies, res)
+        push!(site_indices, site)
+    end  
+
+    z_matrix = reduce(hcat, all_entropies)
+    x_axis = 1:size(z_matrix, 1) 
+    y_axis = site_indices
+
+    plt = surface(
+        x_axis, 
+        y_axis, 
+        z_matrix, 
+        title = "Entanglement Entropy (Von Neumann)",
+        xlabel = "Bond Index",
+        ylabel = "Site Index",
+        zlabel = "Entropy S_vn",
+        color = :viridis,   # Gradient colors are much easier to read in 3D
+        colorbar = true,
+        size = (800, 800) # Set a nice window size
+    )
+
+    savefig(plt, "entropy_interactive.html")
+    display(plt)
 end
 
 function phase_diagram_cached(steps, p)
@@ -497,7 +633,6 @@ function phase_diagram_cached(steps, p)
     
     results = @showprogress pmap(tasks) do idx
         i, j = idx.I
-        # Workers are already prepped. We just send the coordinates.
         return solve_element(mass_vals[j], theta_vals[i], p)
     end
     
@@ -507,21 +642,25 @@ function phase_diagram_cached(steps, p)
     M_condensate = zeros(steps, steps)
     M_charge = zeros(steps, steps)
     BaryonNumber = zeros(steps, steps)
+    psi = Matrix{MPS}(undef, steps, steps)
+    
     for (idx, res) in zip(tasks, results)
         i, j = idx.I
-        M_condensate[j, i] = res[1]
-        M_charge[j, i] = res[2]
+        M_condensate[i, j] = res[1]
+        M_charge[i, j] = res[2]
         gaps = res[3]
         BaryonNumber[j, i] = res[4]
 
         if isnan(gaps[1])
-            M[j, i] = NaN
+            M[i, j] = NaN
         else
-            M[j, i] = gaps[2] - gaps[1]
+            M[i, j] = gaps[2] - gaps[1]
         end
+        psi[i, j] = res[4]
     end
 
-    # ... [Copy your plotting code here] ...
+    filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+
     threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
     data_trimmed = copy(M)
     data_trimmed[data_trimmed .> threshold] .= NaN
@@ -529,7 +668,7 @@ function phase_diagram_cached(steps, p)
     hm = heatmap(
         mass_vals,      # X-axis values
         theta_vals,  # Y-axis values
-        data_trimmed',
+        data_trimmed,
         title = "Phase Diagram (Ground State Energy Gap)",
         ylabel = "Theta",
         xlabel = "Mass",
@@ -538,14 +677,13 @@ function phase_diagram_cached(steps, p)
         dpi = 300
     )
 
-    filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-
     jldsave(filename * ".jld2"; 
-    data = data_trimmed
+    data = data_trimmed, 
+    psi = psi
     )
     savefig(filename * ".png")
 
-    plot = heatmap(mass_vals, theta_vals, M_condensate', 
+    plot = heatmap(mass_vals, theta_vals, M_condensate, 
     title = "Chiral Condensate Phase Diagram",
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
@@ -559,7 +697,7 @@ function phase_diagram_cached(steps, p)
     M_charge = M_charge
     )
     savefig(filename * ".png")
-    plot2 = heatmap(mass_vals, theta_vals, M_charge', 
+    plot2 = heatmap(mass_vals, theta_vals, M_charge, 
     title = "Chiral Condensate Phase Diagram (charge)",
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
@@ -697,9 +835,15 @@ end
 
 
 let 
-    params = ModelParams(4, 1, 3, 1.0, 1.0, 1.0, 0, 1)
-    # # phase_diagram_mn(16)
-    # phase_diagram_cached(2, params)
+    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
+    # phase_diagram_mn(16)
+    phase_diagram_cached(6, params)
+    plot_entanglement(params, filename)
+    #phase_diagram_condensate(20, params)
+    # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
+    # H = construct_hamiltonian(params, sites)
+    # calc_energy_gap(params, sites, H, true)
 
     N_vals = [4, 12, 10]
     v_vals = [0.1,1,10]
