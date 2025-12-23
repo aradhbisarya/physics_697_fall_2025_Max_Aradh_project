@@ -97,8 +97,9 @@ end
         flux_op = OPERATOR_CACHE["Flux_measure"]
         val_charge = inner(psi0', flux_op, psi0)
         val_condensate = measure_chiral_condensate(psi0, p)
-        GC.gc()
-        return (val_condensate, val_charge, gaps)
+        baryon_number = number_op(psi0, p)
+        GC.gc() 
+        return (val_condensate, val_charge, gaps,baryon_number)
     end
 
     #Helper functions
@@ -459,122 +460,20 @@ end
         return [energy0, energy1], psi0
     end
 
-end
-function plot_observables(psi, p::ModelParams)
-    sz = expect(psi, "Sz") 
-    
-    # Initialize plot
-    plt = plot(title="Local Magnetization <Sz>", 
-             xlabel="Physical Lattice Site (n)", 
-             ylabel="<Sz>",
-             legend=:outertopright)
-    
-    # Loop over Flavors and Colors
-    # Assuming the mapping is: (n-1)*F*C + (f-1)*C + c
-    markers = [:circle, :square, :diamond] # Different shapes for flavors
-    
-    for f in 1:p.F
-        for c in 1:p.C
-            # Extract indices for this specific flavor/color combination
-            indices = [l(n, f, c, p) + 1 for n in 1:p.N]
-            
-            label_str = "F=$f, C=$c"
-            
-            plot!(plt, 1:p.N, sz[indices], 
-                label=label_str, 
-                marker=markers[mod1(f, 3)], 
-                linewidth=1.5,
-                alpha=0.8
-            )
-        end
-    end
-    
-    # Add a zero line for reference
-    hline!(plt, [0.0], color=:black, linestyle=:dash, label=nothing)
-    
-    display(plt)
-end
+    function number_op(psi, params)
+        baryon_number = 0.0
+        w = 1.0 / (2.0 * params.a * params.g)
+        for n=1: div(params.N, 2)
+            num = AutoMPO()
 
-function plot_correlations(psi) 
-    M = correlation_matrix(psi, "Sz", "Sz")
-    
-    # Mask the diagonal to see off-diagonal structure
-    for i in 1:size(M,1)
-        M[i,i] = NaN
-    end
-
-    hm = heatmap(M, 
-        title="Spin-Spin Correlation <Sz_i Sz_j>", 
-        xlabel="Site j", 
-        ylabel="Site i",
-        color=:balance, # Diverging colormap
-        clims=(-0.25, 0.25), # Fix scale to max possible range
-        aspect_ratio=:equal,
-        yflip=true # Matrix convention (index 1 at top)
-    )
-    display(hm)
-end
-
-function plot_entanglement(psi, N_total) 
-    entropies = Float64[]
-    
-    # Orthogonalize to the first site to start
-    orthogonalize!(psi, 1)
-    
-    for b in 1:(N_total-1)
-        # Singular Value Decomposition at bond b
-        # ITensor manages the orthogonality center automatically if you move sequentially
-        orthogonalize!(psi, b)
-        
-        # Get the singular values (spectrum of the density matrix)
-        _, S, _ = svd(psi[b], (linkinds(psi, b-1)..., siteinds(psi, b)...))
-        
-        # Calculate Von Neumann Entropy: - sum(p * log(p))
-        Sv = 0.0
-        for n in 1:dim(S, 1)
-            p = S[n, n]^2
-            if p > 1e-12 # Avoid log(0)
-                Sv -= p * log(p)
+            for c=1: params.C
+                num += (w/2), "Sz", l(2*n, 1, c, params) + 1
+                num += (w/2), "Sz", l((2*n)-1, 1, c, params) + 1
             end
+            baryon_number += inner(psi', MPO(num, siteinds(psi)), psi)
         end
-        push!(entropies, Sv)
+        return baryon_number
     end
-
-    # Create the plot
-    plt = plot(entropies, 
-        title="Entanglement Entropy (Von Neumann)", 
-        xlabel="Bond Index", 
-        ylabel="Entropy S_vn", 
-        legend=false,
-        linewidth=2,
-        color=:blue,
-        fill=(0, 0.2, :blue)
-    )
-
-    # Add vertical lines to show physical site boundaries
-    # Each physical site has F*C tensors
-    internal_dim = p.F * p.C
-    boundary_indices = internal_dim:internal_dim:(length(entropies)-1)
-
-    vline!(plt, boundary_indices, 
-        linestyle=:dash, 
-        color=:gray, 
-        alpha=0.5, 
-        label="Site Boundary"
-    )
-
-    display(plt)
-end
-
-function number_op(psi, w, n, params)
-    num = AutoMPO()
-
-    for c=1: C
-        num += (w/2), "Sz", l(2*n, 1, c, params) + 1
-        num += (w/2), "Sz", l((2*n)-1, 1, c, params) + 1
-    end
-
-    return inner(psi', MPO(num, siteinds(psi)), psi)
 end
 
 function phase_diagram_cached(steps, p)
@@ -592,8 +491,8 @@ function phase_diagram_cached(steps, p)
     
     # B. RUN PARAMETER SWEEP
     # ======================
-    mass_vals = collect(range(-100.0, 100.0, length=steps))
-    theta_vals = collect(range(0.01, 100.0, length=steps))
+    mass_vals = collect(range(-20.0, 20.0, length=steps))
+    theta_vals = collect(range(1, 100.0, length=steps))
     tasks = collect(CartesianIndices((steps, steps)))
     
     results = @showprogress pmap(tasks) do idx
@@ -607,12 +506,13 @@ function phase_diagram_cached(steps, p)
     M = zeros(steps, steps)
     M_condensate = zeros(steps, steps)
     M_charge = zeros(steps, steps)
-    
+    BaryonNumber = zeros(steps, steps)
     for (idx, res) in zip(tasks, results)
         i, j = idx.I
         M_condensate[j, i] = res[1]
         M_charge[j, i] = res[2]
         gaps = res[3]
+        BaryonNumber[j, i] = res[4]
 
         if isnan(gaps[1])
             M[j, i] = NaN
@@ -644,7 +544,6 @@ function phase_diagram_cached(steps, p)
     data = data_trimmed
     )
     savefig(filename * ".png")
-    display(hm)
 
     plot = heatmap(mass_vals, theta_vals, M_condensate', 
     title = "Chiral Condensate Phase Diagram",
@@ -669,266 +568,143 @@ function phase_diagram_cached(steps, p)
     )
     savefig(filename * "_charge" * ".png")
 
-    return M
-end
-
-function phase_diagram(steps, p)
-    M = zeros(steps, steps)
-    mass = 1000.0
-    theta = 100
-    mass_vals = collect(range(-mass, mass, length=steps))
-    theta_vals = range(0, theta, length=steps)
-
-    p_meter = Progress(steps * steps, dt=0.5, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
-
-    sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
-
-    m_op = construct_mass_op(sites, p)
-    h_op  = construct_hopping_op(sites, p)
-    c_op = construct_color_op(sites, p)
-    e_op_quad, e_op_lin = construct_electric_spin_op(sites, p)
-
-    w = 1.0/(2*p.a * p.g)
-    J = (p.a * p.g) / 2.0
-    H_init = (h_op * w) + (c_op * J) + (e_op_quad * J)
-
-    for i=1 : steps
-        mass_step = mass_vals[i]
-        H_fixed = (m_op * mass_step) + H_init
-        Threads.@threads :dynamic for j=1 : steps
-            theta_step = theta_vals[j]
-            H = H_fixed + (e_op_lin * (J * (theta_step / pi)))
-            gaps = calc_energy_gap(p, sites, H, false)
-    
-            if isnan(gaps[1])
-                M[j, i] = NaN
-            else
-                M[j, i] = gaps[2] - gaps[1]
-            end
-
-            next!(p_meter)
-        end
-    end
-
-    threshold = 1000 # needs to be larger than expected largest energy gap ~2 * mass
-    data_trimmed = copy(M)
-    data_trimmed[data_trimmed .> threshold] .= NaN
-
-    hm = heatmap(
-        mass_vals,      # X-axis values
-        theta_vals,  # Y-axis values
-        data_trimmed,
-        title = "Phase Diagram (Ground State Energy Gap)",
-        ylabel = "Theta",
-        xlabel = "Mass",
-        na_color = :green,
-        color = :viridis,
-        dpi = 300
+    filename = "baryon_number_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    plot3 = heatmap(mass_vals, theta_vals, BaryonNumber', 
+    title = "Baryon Number Phase Diagram",
+    xlabel = "Mass Parameter (m)",
+    ylabel = "Theta",
+    xlabel = "Mass",
+    na_color = :green,
+    color = :viridis,
+    dpi = 300
     )
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
     jldsave(filename * ".jld2"; 
+    BaryonNumber = BaryonNumber,
     data = data_trimmed
     )
     savefig(filename * ".png")
-    display(hm)
-    return data_trimmed
+    return M
 end
+function sweep_over_N_and_plot(
+    N_vals::Vector{Int},
+    v_vals::Vector{Float64},
+        base::ModelParams
+    )# ---------- INITIALIZE PLOTS ONCE ----------
+    p1 = plot(
+        xlabel = "N",
+        ylabel = "⟨ψ̄ψ⟩",
+        title = "Chiral Condensate vs N"
+    )
 
-function phase_diagram_mn(steps)
-    # Define Base Parameters
-    F, C = 1, 3
-    a_val, g_val, m0_val, L_val = 1.0, 1.0, 1.0, 0.0
-    
-    mass_limit = 8.0
-    mass_vals = collect(range(-mass_limit, mass_limit, length=steps*4))
-    n_vals = [i for i in 1:steps if iseven(i)]
-    
-    # Pre-allocate matrix (rows=mass, cols=sites)
-    results = zeros(Float64, length(mass_vals), length(n_vals))
+    p2 = plot(
+        xlabel = "N",
+        ylabel = "⟨Q²⟩",
+        title = "Charge vs N"
+    )
 
-    p_meter = Progress(length(n_vals) * length(mass_vals), desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
+    p3 = plot(
+        xlabel = "N",
+        ylabel = "Baryon Number",
+        title = "Baryon Number vs N"
+    )
 
-    for i in 1:length(n_vals)
-        local_n = n_vals[i]
+    p4 = plot(
+        xlabel = "N",
+        ylabel = "ΔE",
+        title = "Energy Gap vs N"
+    )
 
-        params = ModelParams(local_n, F, C, a_val, g_val, m0_val, L_val, 1)
+    results = Dict()
 
-        # Constants
-        w = 1.0 / (2 * params.a * params.g)
-        J = (params.a * params.g) / 2.0
-        
-        local_sites = siteinds("S=1/2", local_n * params.F * params.C, conserve_qns=true)
+    for v in v_vals
 
-        m_op = construct_mass_op(local_sites, params)
-        h_op  = construct_hopping_op(local_sites, params)
-        c_op = construct_color_op(local_sites, params)
-        e_op_quad, e_op_lin = construct_electric_spin_op(local_sites, params)
-        #f_op = construct_flux_op(local_sites, params)
+        condensate = Float64[]
+        charge     = Float64[]
+        baryon     = Float64[]
+        gap        = Float64[]
 
+        for N in N_vals
+            println("\n==============================")
+            println("Running N = $N   (a = 1/$N, v = $v)")
+            println("==============================")
 
-        H_fixed = (w * h_op) + (c_op * J) + (e_op_quad * J) + (e_op_lin * (J * (p.theta / pi)))
-        
-        Threads.@threads :dynamic for j in 1:length(mass_vals)
-            mass_step = mass_vals[j]
+            pN = ModelParams(
+                N,
+                base.F,
+                base.C,
+                v / N,
+                base.g,
+                base.m0,
+                base.L,
+                base.theta
+            )
 
-            H = (mass_step * m_op) + H_fixed
-            gaps = calc_energy_gap(params, local_sites, H, false)
-    
+            @everywhere init_worker_cache($pN)
 
-            if isnan(gaps[1])
-                results[j, i] = NaN
-            else
-                results[j, i] = gaps[2] - gaps[1]
-            end
+            val_cond, val_charge, gaps, baryon_val =
+                solve_element(pN.m0, pN.theta, pN)
 
-            next!(p_meter)
+            gap_val = isnan(gaps[1]) ? NaN : gaps[2] - gaps[1]
+
+            push!(condensate, val_cond)
+            push!(charge,     val_charge)
+            push!(baryon,     baryon_val)
+            push!(gap,        gap_val)
+            display(
+                @sprintf(
+                    "N=%d | ⟨ψ̄ψ⟩=%.6f | ⟨Q²⟩=%.6f | Baryon=%.6f | ΔE=%.6f",
+                    N,
+                    val_cond,
+                    val_charge,
+                    baryon_val,
+                    gap_val
+                )
+            )
         end
+
+        # ---------- OVERLAY CURVES ----------
+        plot!(p1, N_vals, condensate, marker = :o, label = "v = $v")
+        plot!(p2, N_vals, charge,     marker = :o, label = "v = $v")
+        plot!(p3, N_vals, baryon,     marker = :o, label = "v = $v")
+        plot!(p4, N_vals, gap,        marker = :o, label = "v = $v")
+
+        results[v] = (
+            N = N_vals,
+            condensate = condensate,
+            charge = charge,
+            baryon = baryon,
+            gap = gap
+        )
     end
 
-    # ... loops finished ...
+    # ---------- SAVE FIGURES ----------
+    savefig(p1, "condensate_vs_N.png")
+    savefig(p2, "charge_vs_N.png")
+    savefig(p3, "baryon_vs_N.png")
+    savefig(p4, "gap_vs_N.png")
 
-    threshold = 1000.0
-    results_to_save = copy(results)
-    results[results .> threshold] .= NaN
-
-    println("Saving simulation data to phase_diagram.jld2...")
-    jldsave("phase_diagram.jld2"; 
-        results=results_to_save, 
-        mass_vals=mass_vals, 
-        n_vals=n_vals
+    savefig(
+        plot(p1, p2, p3, p4, layout = (2,2)),
+        "combined_N_sweep.png"
     )
 
-    # ... proceed to plotting ...
-
-    hm = heatmap(
-        mass_vals,      # X-axis values
-        n_vals,  # Y-axis values
-        results_to_save',
-        title = "Phase Diagram (Ground State Energy Gap)",
-        ylabel = "Sites (N)",
-        xlabel = "Mass",
-        na_color = :green,
-        color = :viridis,
-        dpi = 300
-    )
-    display(hm)
     return results
 end
 
 
 
-function phase_diagram_condensate(steps, p)
-    
-    M_condensate = zeros(steps, steps)
-    M_charge = zeros(steps, steps)
-    
-    mass_range = range(-10.0, 10.0, length=steps)
-    theta_range = range(0.01, 6.0, length=steps) 
-    sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
-    
-    println("Starting Phase Diagram Scan...")
-
-    m_op = construct_mass_op(sites, p)
-    h_op  = construct_hopping_op(sites, p)
-    c_op = construct_color_op(sites, p)
-    e_op_quad, e_op_lin = construct_electric_spin_op(sites, p)
-    #f_op = construct_flux_op(sites, params)
-
-    p_meter = Progress(steps * steps, desc="Simulation Progress: ", barglyphs=BarGlyphs("[=> ]"))
-
-    os = measure_total_flux_squared(p) 
-
-    #DMRG Parameters
-    nsweeps = 15
-    maxdim = [10, 20, 50, 100, 200, 400, 1000, 2000, 4000]
-    noise = [1E-4, 1E-5, 0.0]
-    cutoff = [1E-6, 1E-8, 1E-12]
-
-    Threads.@threads :dynamic for i in 1:steps
-        w = 1.0 / (2 * p.a * p.g)
-        J = (p.a * p.g) / 2.0
-        
-        H_fixed = (h_op * w) + (e_op_quad * J) + (e_op_lin * (J * (theta_range[i]/pi))) + (c_op * J)
-        for j in 1:steps
-            m = mass_range[j] / p.g
-            H = (m_op * m) + H_fixed
-            
-            state_array = [isodd(div(x-1, p.F*p.C) + 1) ? "Up" : "Dn" for x in 1:(p.N*p.F*p.C)]
-            psi_init = random_mps(sites, state_array)
-
-            energy, psi0 = dmrg(H, psi_init; nsweeps, maxdim, cutoff, noise, outputlevel=0)
-
-            flux_squared_op = MPO(os, sites)
-    
-            M_charge[j, i] = inner(psi0', flux_squared_op, psi0)
-
-            # #Measure Condensate
-            val = measure_chiral_condensate(psi0, p)
-            M_condensate[j, i] = val
-
-            
-            # print(val)
-            next!(p_meter)
-        end
-    end
-
-    # Plotting
-    plot = heatmap(mass_range, theta_range, M_condensate', 
-        title = "Chiral Condensate Phase Diagram",
-        xlabel = "Mass Parameter (m)",
-        ylabel = "Theta",
-        color = :viridis, # Thermal is good for 0 to 1 intensity
-        dpi = 300
-    )
-    filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-
-    jldsave(filename * ".jld2"; 
-    M_condensate = M_condensate,
-    M_charge = M_charge
-    )
-    savefig(filename * ".png")
-    plot2 = heatmap(mass_range, theta_range, M_charge', 
-    title = "Chiral Condensate Phase Diagram (charge)",
-    xlabel = "Mass Parameter (m)",
-    ylabel = "Theta",
-    color = :viridis,
-    dpi = 300
-    )
-    savefig(filename * "_charge" * ".png")
-    display(plot)
-    return M_condensate
-end
-
 let 
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
-    # phase_diagram_mn(16)
-    phase_diagram_cached(100, params)
-    #phase_diagram_condensate(20, params)
-    # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
-    # H = construct_hamiltonian(params, sites)
-    # calc_energy_gap(params, sites, H, true)
+    params = ModelParams(4, 1, 3, 1.0, 1.0, 1.0, 0, 1)
+    # # phase_diagram_mn(16)
+    # phase_diagram_cached(2, params)
 
-    # ret = []
-    # for n=1: div(N,2)
-    #     push!(ret, number_op(psi0, w, n))
-    # end
+    N_vals = [4, 12, 10]
+    v_vals = [0.1,1,10]
 
-    # ret2 = []
-    # for n=1: div(N,2)
-    #     push!(ret2, number_op(psi1, w, n))
-    # end
+    sweep_over_N_and_plot(N_vals, v_vals,params)
 
-    # p = plot(title="Number operator vaules for Random and Minimized states", xlabel="Site", ylabel="Number operator value")
-    # plot!(p, ret, label="zero")
-    # plot!(p, ret2, label="one")
-    # display(p)
-    
-    # plot_observables(psi, N, F, C)
-
-    # plot_correlations(psi)
-
-    # plot_entanglement(psi, N*F*C)
 
 end
