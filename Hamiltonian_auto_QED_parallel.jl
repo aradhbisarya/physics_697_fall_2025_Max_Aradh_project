@@ -629,7 +629,7 @@ function phase_diagram_cached(steps, p)
     hm = heatmap(
         mass_vals,      # X-axis values
         theta_vals,  # Y-axis values
-        data_trimmed,
+        data_trimmed',
         title = "Phase Diagram (Ground State Energy Gap)",
         ylabel = "Theta",
         xlabel = "Mass",
