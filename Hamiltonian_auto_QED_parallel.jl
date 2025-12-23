@@ -711,7 +711,6 @@ function phase_diagram_cached(steps, p)
     title = "Baryon Number Phase Diagram",
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
-    xlabel = "Mass",
     na_color = :green,
     color = :viridis,
     dpi = 300
@@ -726,6 +725,7 @@ function phase_diagram_cached(steps, p)
     savefig(filename * ".png")
     return M
 end
+
 function sweep_over_N_and_plot(
     N_vals::Vector{Int},
     v_vals::Vector{Float64},
@@ -836,10 +836,10 @@ end
 
 let 
     params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
-    filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
-    # phase_diagram_mn(16)
-    phase_diagram_cached(6, params)
-    plot_entanglement(params, filename)
+    # filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
+    # # phase_diagram_mn(16)
+    # phase_diagram_cached(6, params)
+    # plot_entanglement(params, filename)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
