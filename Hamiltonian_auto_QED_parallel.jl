@@ -729,7 +729,7 @@ function plot_baryon_number(p::ModelParams, filename)
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
-    jldsave(filename * ".jld2"; 
+    jldsave(filename * "_BaryonNumber.jld2"; 
     BaryonNumber = BaryonNumber
     )
     savefig(filename * ".png")
@@ -750,7 +750,7 @@ function phase_diagram_cached(steps, p)
     
     # B. RUN PARAMETER SWEEP
     # ======================
-    mass_vals = collect(range(-1.0, 1.0, length=steps))
+    mass_vals = collect(range(-10.0, 10.0, length=steps))
     theta_vals = collect(range(0, 2 * pi, length=steps))
     tasks = collect(CartesianIndices((steps, steps)))
     
@@ -882,22 +882,22 @@ end
 
 
 let 
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(10, 1, 2, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
-    # phase_diagram_cached(6, params)
-    # plot_entanglement(params, filename)
-    # plot_chiral_condensate(params, filename)
-    # plot_baryon_number(params, filename)
+    #  phase_diagram_cached(20, params)
+    plot_entanglement(params, filename)
+    plot_chiral_condensate(params, filename)
+    plot_baryon_number(params, filename)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
 
-    N_vals = [4, 12, 10]
-    v_vals = [0.1,1,10]
+    # N_vals = [4, 12, 10]
+    # v_vals = [0.1,1,10]
 
-    sweep_over_N_and_plot(N_vals, v_vals,params)
+    # sweep_over_N_and_plot(N_vals, v_vals,params)
 
 
 end
