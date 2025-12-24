@@ -622,7 +622,7 @@ function plot_entanglement(p::ModelParams, filename)
     lin_map = LinearIndices(psi)
 
     for (idx, res) in zip(tasks, results)
-        site = lin_map[idx] % (size(psi, 1)
+        site = lin_map[idx] % (size(psi, 1))
         if site == 0
             site = (size(psi, 1)
         end
@@ -634,7 +634,7 @@ function plot_entanglement(p::ModelParams, filename)
     x_axis = 1:size(z_matrix, 1) 
     y_axis = site_indices
 
-    plt = surface(
+    plt = heatmap(
         x_axis, 
         y_axis, 
         z_matrix, 
@@ -643,11 +643,9 @@ function plot_entanglement(p::ModelParams, filename)
         ylabel = "Site Index",
         zlabel = "Entropy S_vn",
         color = :viridis,   # Gradient colors are much easier to read in 3D
-        colorbar = true,
-        size = (800, 800) # Set a nice window size
     )
 
-    savefig(plt, filename * "_entropy_interactive.html")
+    savefig(plt, filename * "_entropy_interactive.png")
     display(plt)
 end
 
@@ -678,7 +676,6 @@ function plot_chiral_condensate(p::ModelParams, filename)
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
     color = :viridis, # Thermal is good for 0 to 1 intensity
-    dpi = 300
     )
     filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
@@ -692,7 +689,6 @@ function plot_chiral_condensate(p::ModelParams, filename)
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
     color = :viridis,
-    dpi = 300
     )
     savefig(filename * "_charge" * ".png")
 end
@@ -724,7 +720,6 @@ function plot_baryon_number(p::ModelParams, filename)
     ylabel = "Theta",
     na_color = :green,
     color = :viridis,
-    dpi = 300
     )
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
@@ -793,7 +788,6 @@ function phase_diagram_cached(steps, p)
         xlabel = "Mass",
         na_color = :green,
         color = :viridis,
-        dpi = 300
     )
 
     jldsave(filename * ".jld2"; 
@@ -882,10 +876,10 @@ end
 
 
 let 
-    params = ModelParams(10, 2, 2, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(6, 2, 2, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
-    phase_diagram_cached(20, params)
+    phase_diagram_cached(10, params)
     plot_entanglement(params, filename)
     plot_chiral_condensate(params, filename)
     plot_baryon_number(params, filename)
