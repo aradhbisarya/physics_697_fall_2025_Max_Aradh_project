@@ -93,7 +93,7 @@ end
         gaps, psi0 = calc_energy_gap(p, sites, H, false)
 
         GC.gc() 
-        return (gaps, psi0)
+        return (gaps, psi0, sites)
     end
 
     function run_worker_task(N::Int, v::Float64, base::ModelParams)
@@ -525,8 +525,7 @@ end
         return entropies
     end
 
-    function calc_chiral_condensate(p::ModelParams, psi)
-        sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
+    function calc_chiral_condensate(p::ModelParams, psi, sites)
         flux_op = MPO(measure_total_flux_squared(p), sites)
 
         val_charge = inner(psi', flux_op, psi)
@@ -623,8 +622,10 @@ function plot_entanglement(p::ModelParams, filename)
     lin_map = LinearIndices(psi)
 
     for (idx, res) in zip(tasks, results)
-        site = lin_map[idx]
-
+        site = lin_map[idx] % 6
+        if site == 0
+            site = 6
+        end
         push!(all_entropies, res)
         push!(site_indices, site)
     end  
@@ -652,14 +653,14 @@ end
 
 function plot_chiral_condensate(p::ModelParams, filename)
     load_name = filename * ".JLD2"
-    psi, mass_vals, theta_vals = load(load_name, "psi", "mass_vals", "theta_vals")
+    psi, sites, mass_vals, theta_vals = load(load_name, "psi", "sites", "mass_vals", "theta_vals")
     site = 0
 
     tasks = collect(CartesianIndices((size(psi, 1), size(psi, 2))))
     
     results = @showprogress pmap(tasks) do idx
         i, j = idx.I
-        return calc_chiral_condensate(p, psi[i, j])
+        return calc_chiral_condensate(p, psi[i, j], sites[i, j])
     end
 
     M_condensate = zeros(size(psi, 1), size(psi, 2))
@@ -729,8 +730,7 @@ function plot_baryon_number(p::ModelParams, filename)
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
 
     jldsave(filename * ".jld2"; 
-    BaryonNumber = BaryonNumber,
-    data = data_trimmed
+    BaryonNumber = BaryonNumber
     )
     savefig(filename * ".png")
 end
@@ -750,8 +750,8 @@ function phase_diagram_cached(steps, p)
     
     # B. RUN PARAMETER SWEEP
     # ======================
-    mass_vals = collect(range(-20.0, 20.0, length=steps))
-    theta_vals = collect(range(1, 100.0, length=steps))
+    mass_vals = collect(range(-1.0, 1.0, length=steps))
+    theta_vals = collect(range(0, 2 * pi, length=steps))
     tasks = collect(CartesianIndices((steps, steps)))
     
     results = @showprogress pmap(tasks) do idx
@@ -763,6 +763,7 @@ function phase_diagram_cached(steps, p)
     # ===========
     M = zeros(steps, steps)
     psi = Matrix{MPS}(undef, steps, steps)
+    sites = Matrix{Vector{Index{Vector{Pair{QN, Int64}}}}}(undef, steps, steps)
     
     for (idx, res) in zip(tasks, results)
         i, j = idx.I
@@ -774,6 +775,7 @@ function phase_diagram_cached(steps, p)
             M[i, j] = gaps[2] - gaps[1]
         end
         psi[i, j] = res[2]
+        sites[i, j] = res[3]
     end
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
@@ -797,6 +799,7 @@ function phase_diagram_cached(steps, p)
     jldsave(filename * ".jld2"; 
     data = data_trimmed, 
     psi = psi,
+    sites = sites,
     mass_vals = mass_vals,
     theta_vals = theta_vals
     )
@@ -879,13 +882,13 @@ end
 
 
 let 
-    params = ModelParams(6, 1, 2, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
     phase_diagram_cached(6, params)
-    # plot_entanglement(params, filename)
-    # plot_chiral_condensate(params, filename)
-    # plot_baryon_number(parmas, filename)
+    plot_entanglement(params, filename)
+    plot_chiral_condensate(params, filename)
+    plot_baryon_number(params, filename)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
