@@ -622,9 +622,9 @@ function plot_entanglement(p::ModelParams, filename)
     lin_map = LinearIndices(psi)
 
     for (idx, res) in zip(tasks, results)
-        site = lin_map[idx] % 6
+        site = lin_map[idx] % (size(psi, 1)
         if site == 0
-            site = 6
+            site = (size(psi, 1)
         end
         push!(all_entropies, res)
         push!(site_indices, site)
@@ -647,7 +647,7 @@ function plot_entanglement(p::ModelParams, filename)
         size = (800, 800) # Set a nice window size
     )
 
-    savefig(plt, "entropy_interactive.html")
+    savefig(plt, filename * "_entropy_interactive.html")
     display(plt)
 end
 
@@ -750,7 +750,7 @@ function phase_diagram_cached(steps, p)
     
     # B. RUN PARAMETER SWEEP
     # ======================
-    mass_vals = collect(range(-10.0, 10.0, length=steps))
+    mass_vals = collect(range(-1.0, 1.0, length=steps))
     theta_vals = collect(range(0, 2 * pi, length=steps))
     tasks = collect(CartesianIndices((steps, steps)))
     
@@ -882,10 +882,10 @@ end
 
 
 let 
-    params = ModelParams(10, 1, 2, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(10, 2, 2, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
-    #  phase_diagram_cached(20, params)
+    phase_diagram_cached(20, params)
     plot_entanglement(params, filename)
     plot_chiral_condensate(params, filename)
     plot_baryon_number(params, filename)
