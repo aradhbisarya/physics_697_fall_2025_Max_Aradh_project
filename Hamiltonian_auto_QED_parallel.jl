@@ -624,7 +624,7 @@ function plot_entanglement(p::ModelParams, filename)
     for (idx, res) in zip(tasks, results)
         site = lin_map[idx] % (size(psi, 1))
         if site == 0
-            site = (size(psi, 1)
+            site = (size(psi, 1))
         end
         push!(all_entropies, res)
         push!(site_indices, site)
