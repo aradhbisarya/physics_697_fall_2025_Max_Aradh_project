@@ -65,8 +65,6 @@ end
             OPERATOR_CACHE["Flux"] = construct_flux_op(sites, p)
         end
 
-        OPERATOR_CACHE["Flux_measure"] = MPO(measure_total_flux_squared(p), sites)
-
         println("Worker $(myid()) ready!")
     end
 
@@ -94,12 +92,38 @@ end
 
         gaps, psi0 = calc_energy_gap(p, sites, H, false)
 
-        flux_op = OPERATOR_CACHE["Flux_measure"]
-        val_charge = inner(psi0', flux_op, psi0)
-        val_condensate = measure_chiral_condensate(psi0, p)
-        baryon_number = number_op(psi0, p)
         GC.gc() 
-        return (val_condensate, val_charge, gaps,baryon_number)
+        return (gaps, psi0)
+    end
+
+    function run_worker_task(N::Int, v::Float64, base::ModelParams)
+        pN = ModelParams(
+            N, base.F, base.C, v / N, 
+            base.g, base.m0, base.L, base.theta
+        )
+
+        init_worker_cache(pN)
+
+        gaps, psi = solve_element(pN.m0, pN.theta, pN)
+        
+        gap_val = NaN
+        if isnan(gaps[1])
+            M[i, j] = NaN
+        else
+            M[i, j] = gaps[2] - gaps[1]
+        end
+
+        cond_val = measure_chiral_condensate(psi, pN)
+
+        flux_op_mpo = MPO(measure_total_flux_squared(pN), OPERATOR_CACHE["sites"])
+        charge_val = inner(psi', flux_op_mpo, psi)
+        baryon_val = number_op(pN, psi)
+
+        psi = nothing
+        GC.gc()
+
+        # Return a lightweight tuple
+        return (cond=cond_val, charge=charge_val, baryon=baryon_val, gap=gap_val)
     end
 
     #Helper functions
@@ -398,7 +422,7 @@ end
         return os
     end
 
-    function measure_chiral_condensate(psi, p)
+    function measure_chiral_condensate(psi, p::ModelParams)
         sz_exp = expect(psi, "Sz")
         
         total_val = 0.0
@@ -460,7 +484,7 @@ end
         return [energy0, energy1], psi0
     end
 
-    function number_op(psi, params)
+    function number_op(params::ModelParams, psi)
         baryon_number = 0.0
         w = 1.0 / (2.0 * params.a * params.g)
         for n=1: div(params.N, 2)
@@ -499,6 +523,16 @@ end
         end
 
         return entropies
+    end
+
+    function calc_chiral_condensate(p::ModelParams, psi)
+        sites = siteinds("S=1/2", p.N * p.F * p.C, conserve_qns=true)
+        flux_op = MPO(measure_total_flux_squared(p), sites)
+
+        val_charge = inner(psi', flux_op, psi)
+        val_condensate = measure_chiral_condensate(psi, p)
+
+        return (val_charge, val_condensate)
     end
 
 end
@@ -557,16 +591,18 @@ function plot_correlations(psi)
     display(hm)
 end
 
-function number_op(psi, w, n, params)
-    num = AutoMPO()
+# DEPRECIATED
 
-    for c=1: C
-        num += (w/2), "Sz", l(2*n, 1, c, params) + 1
-        num += (w/2), "Sz", l((2*n)-1, 1, c, params) + 1
-    end
+# function number_op(psi, w, n, params)
+#     num = AutoMPO()
 
-    return inner(psi', MPO(num, siteinds(psi)), psi)
-end
+#     for c=1: C
+#         num += (w/2), "Sz", l(2*n, 1, c, params) + 1
+#         num += (w/2), "Sz", l((2*n)-1, 1, c, params) + 1
+#     end
+
+#     return inner(psi', MPO(num, siteinds(psi)), psi)
+# end
 
 function plot_entanglement(p::ModelParams, filename)
     load_name = filename * ".JLD2"
@@ -614,6 +650,91 @@ function plot_entanglement(p::ModelParams, filename)
     display(plt)
 end
 
+function plot_chiral_condensate(p::ModelParams, filename)
+    load_name = filename * ".JLD2"
+    psi, mass_vals, theta_vals = load(load_name, "psi", "mass_vals", "theta_vals")
+    site = 0
+
+    tasks = collect(CartesianIndices((size(psi, 1), size(psi, 2))))
+    
+    results = @showprogress pmap(tasks) do idx
+        i, j = idx.I
+        return calc_chiral_condensate(p, psi[i, j])
+    end
+
+    M_condensate = zeros(size(psi, 1), size(psi, 2))
+    M_charge = zeros(size(psi, 1), size(psi, 2))
+
+    for (idx, res) in zip(tasks, results)
+        i, j = idx.I
+
+        M_charge[i, j] = res[1]
+        M_condensate[i, j] = res[2]
+    end  
+
+    plot = heatmap(mass_vals, theta_vals, M_condensate, 
+    title = "Chiral Condensate Phase Diagram",
+    xlabel = "Mass Parameter (m)",
+    ylabel = "Theta",
+    color = :viridis, # Thermal is good for 0 to 1 intensity
+    dpi = 300
+    )
+    filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+
+    jldsave(filename * ".jld2"; 
+    M_condensate = M_condensate,
+    M_charge = M_charge
+    )
+    savefig(filename * ".png")
+    plot2 = heatmap(mass_vals, theta_vals, M_charge, 
+    title = "Chiral Condensate Phase Diagram (charge)",
+    xlabel = "Mass Parameter (m)",
+    ylabel = "Theta",
+    color = :viridis,
+    dpi = 300
+    )
+    savefig(filename * "_charge" * ".png")
+end
+
+function plot_baryon_number(p::ModelParams, filename)
+    load_name = filename * ".JLD2"
+    psi, mass_vals, theta_vals = load(load_name, "psi", "mass_vals", "theta_vals")
+    site = 0
+
+    tasks = collect(CartesianIndices((size(psi, 1), size(psi, 2))))
+    
+    results = @showprogress pmap(tasks) do idx
+        i, j = idx.I
+        return number_op(p, psi[i, j])
+    end
+
+    BaryonNumber = zeros(size(psi, 1), size(psi, 2))
+
+    for (idx, res) in zip(tasks, results)
+        i, j = idx.I
+        BaryonNumber[i, j] = res
+    end  
+
+
+    filename = "baryon_number_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    plot3 = heatmap(mass_vals, theta_vals, BaryonNumber, 
+    title = "Baryon Number Phase Diagram",
+    xlabel = "Mass Parameter (m)",
+    ylabel = "Theta",
+    na_color = :green,
+    color = :viridis,
+    dpi = 300
+    )
+
+    filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+
+    jldsave(filename * ".jld2"; 
+    BaryonNumber = BaryonNumber,
+    data = data_trimmed
+    )
+    savefig(filename * ".png")
+end
+
 function phase_diagram_cached(steps, p)
     
     # A. INITIALIZE WORKERS
@@ -641,24 +762,18 @@ function phase_diagram_cached(steps, p)
     # C. PLOTTING
     # ===========
     M = zeros(steps, steps)
-    M_condensate = zeros(steps, steps)
-    M_charge = zeros(steps, steps)
-    BaryonNumber = zeros(steps, steps)
     psi = Matrix{MPS}(undef, steps, steps)
     
     for (idx, res) in zip(tasks, results)
         i, j = idx.I
-        M_condensate[i, j] = res[1]
-        M_charge[i, j] = res[2]
-        gaps = res[3]
-        BaryonNumber[j, i] = res[4]
+        gaps = res[1]
 
         if isnan(gaps[1])
             M[i, j] = NaN
         else
             M[i, j] = gaps[2] - gaps[1]
         end
-        psi[i, j] = res[4]
+        psi[i, j] = res[2]
     end
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
@@ -681,176 +796,105 @@ function phase_diagram_cached(steps, p)
 
     jldsave(filename * ".jld2"; 
     data = data_trimmed, 
-    psi = psi
+    psi = psi,
+    mass_vals = mass_vals,
+    theta_vals = theta_vals
     )
     savefig(filename * ".png")
 
-    plot = heatmap(mass_vals, theta_vals, M_condensate, 
-    title = "Chiral Condensate Phase Diagram",
-    xlabel = "Mass Parameter (m)",
-    ylabel = "Theta",
-    color = :viridis, # Thermal is good for 0 to 1 intensity
-    dpi = 300
-    )
-    filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-
-    jldsave(filename * ".jld2"; 
-    M_condensate = M_condensate,
-    M_charge = M_charge
-    )
-    savefig(filename * ".png")
-    plot2 = heatmap(mass_vals, theta_vals, M_charge, 
-    title = "Chiral Condensate Phase Diagram (charge)",
-    xlabel = "Mass Parameter (m)",
-    ylabel = "Theta",
-    color = :viridis,
-    dpi = 300
-    )
-    savefig(filename * "_charge" * ".png")
-
-    filename = "baryon_number_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-    plot3 = heatmap(mass_vals, theta_vals, BaryonNumber', 
-    title = "Baryon Number Phase Diagram",
-    xlabel = "Mass Parameter (m)",
-    ylabel = "Theta",
-    na_color = :green,
-    color = :viridis,
-    dpi = 300
-    )
-
-    filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-
-    jldsave(filename * ".jld2"; 
-    BaryonNumber = BaryonNumber,
-    data = data_trimmed
-    )
-    savefig(filename * ".png")
     return M
 end
 
-function sweep_over_N_and_plot(
-    N_vals::Vector{Int},
-    v_vals::Vector{Float64},
-        base::ModelParams
-    )# ---------- INITIALIZE PLOTS ONCE ----------
-    p1 = plot(
-        xlabel = "N",
-        ylabel = "⟨ψ̄ψ⟩",
-        title = "Chiral Condensate vs N"
-    )
+function sweep_over_N_and_plot(N_vals::Vector{Int}, v_vals::Vector{Float64}, base::ModelParams)
+    param_combinations = vec(collect(Iterators.product(N_vals, v_vals)))
+    
+    println("Starting sweep over $(length(param_combinations)) configurations...")
 
-    p2 = plot(
-        xlabel = "N",
-        ylabel = "⟨Q²⟩",
-        title = "Charge vs N"
-    )
-
-    p3 = plot(
-        xlabel = "N",
-        ylabel = "Baryon Number",
-        title = "Baryon Number vs N"
-    )
-
-    p4 = plot(
-        xlabel = "N",
-        ylabel = "ΔE",
-        title = "Energy Gap vs N"
-    )
-
-    results = Dict()
-
-    for v in v_vals
-
-        condensate = Float64[]
-        charge     = Float64[]
-        baryon     = Float64[]
-        gap        = Float64[]
-
-        for N in N_vals
-            println("\n==============================")
-            println("Running N = $N   (a = 1/$N, v = $v)")
-            println("==============================")
-
-            pN = ModelParams(
-                N,
-                base.F,
-                base.C,
-                v / N,
-                base.g,
-                base.m0,
-                base.L,
-                base.theta
-            )
-
-            @everywhere init_worker_cache($pN)
-
-            val_cond, val_charge, gaps, baryon_val =
-                solve_element(pN.m0, pN.theta, pN)
-
-            gap_val = isnan(gaps[1]) ? NaN : gaps[2] - gaps[1]
-
-            push!(condensate, val_cond)
-            push!(charge,     val_charge)
-            push!(baryon,     baryon_val)
-            push!(gap,        gap_val)
-            display(
-                @sprintf(
-                    "N=%d | ⟨ψ̄ψ⟩=%.6f | ⟨Q²⟩=%.6f | Baryon=%.6f | ΔE=%.6f",
-                    N,
-                    val_cond,
-                    val_charge,
-                    baryon_val,
-                    gap_val
-                )
-            )
-        end
-
-        # ---------- OVERLAY CURVES ----------
-        plot!(p1, N_vals, condensate, marker = :o, label = "v = $v")
-        plot!(p2, N_vals, charge,     marker = :o, label = "v = $v")
-        plot!(p3, N_vals, baryon,     marker = :o, label = "v = $v")
-        plot!(p4, N_vals, gap,        marker = :o, label = "v = $v")
-
-        results[v] = (
-            N = N_vals,
-            condensate = condensate,
-            charge = charge,
-            baryon = baryon,
-            gap = gap
-        )
+    # resulting_data will be a Vector of NamedTuples
+    resulting_data = @showprogress pmap(param_combinations) do (N, v)
+        return run_worker_task(N, v, base)
     end
 
-    # ---------- SAVE FIGURES ----------
-    savefig(p1, "condensate_vs_N.png")
-    savefig(p2, "charge_vs_N.png")
-    savefig(p3, "baryon_vs_N.png")
-    savefig(p4, "gap_vs_N.png")
+    rows = length(N_vals)
+    cols = length(v_vals)
+    
+    M_cond   = zeros(rows, cols)
+    M_charge = zeros(rows, cols)
+    M_baryon = zeros(rows, cols)
+    M_gap    = zeros(rows, cols)
 
-    savefig(
-        plot(p1, p2, p3, p4, layout = (2,2)),
-        "combined_N_sweep.png"
+    for (idx, (N, v)) in enumerate(param_combinations)
+        i = findfirst(==(N), N_vals)
+        j = findfirst(==(v), v_vals)
+        
+        res = resulting_data[idx]
+        
+        M_cond[i, j]   = res.cond
+        M_charge[i, j] = res.charge
+        M_baryon[i, j] = res.baryon
+        M_gap[i, j]    = res.gap
+        
+        @printf("N=%d, v=%.2f | <ψ̄ψ>=%.4f | <Q²>=%.4f | B=%.4f | ΔE=%.4f\n", 
+                N, v, res.cond, res.charge, res.baryon, res.gap)
+    end
+
+    # --- PLOTTING ---
+    # Initialize plots
+    p1 = plot(xlabel = "N", ylabel = "⟨ψ̄ψ⟩", title = "Chiral Condensate vs N", legend=:topright)
+    p2 = plot(xlabel = "N", ylabel = "⟨Q²⟩", title = "Charge vs N", legend=:topright)
+    p3 = plot(xlabel = "N", ylabel = "Baryon Number", title = "Baryon vs N", legend=:topright)
+    p4 = plot(xlabel = "N", ylabel = "ΔE", title = "Energy Gap vs N", legend=:topright)
+
+    # Loop over v_vals (columns) to add a line for each v
+    for j in 1:cols
+        v = v_vals[j]
+        lbl = "v = $(v)"
+        
+        plot!(p1, N_vals, M_cond[:, j],   marker=:circle, label=lbl)
+        plot!(p2, N_vals, M_charge[:, j], marker=:square, label=lbl)
+        plot!(p3, N_vals, M_baryon[:, j], marker=:diamond, label=lbl)
+        plot!(p4, N_vals, M_gap[:, j],    marker=:utriangle, label=lbl)
+    end
+
+    # Combine and Save
+    final_plot = plot(p1, p2, p3, p4, layout = (2, 2), size=(1000, 800))
+    
+    filename = "sweep_N_results"
+    savefig(final_plot, filename * ".png")
+    
+    # Save raw data
+    jldsave(filename * ".jld2"; 
+        N_vals=N_vals, 
+        v_vals=v_vals, 
+        condensate=M_cond, 
+        charge=M_charge, 
+        baryon=M_baryon, 
+        gap=M_gap
     )
-
-    return results
+    
+    println("Sweep complete. Saved to $filename.png")
+    display(final_plot)
 end
 
 
 
 let 
-    params = ModelParams(6, 1, 3, 1.0, 1.0, 20.0, 0, 1)
-    # filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
+    params = ModelParams(6, 1, 2, 1.0, 1.0, 20.0, 0, 1)
+    filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
-    # phase_diagram_cached(6, params)
+    phase_diagram_cached(6, params)
     # plot_entanglement(params, filename)
+    # plot_chiral_condensate(params, filename)
+    # plot_baryon_number(parmas, filename)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
     # calc_energy_gap(params, sites, H, true)
 
-    N_vals = [4, 12, 10]
-    v_vals = [0.1,1,10]
+    # N_vals = [4, 12, 10]
+    # v_vals = [0.1,1,10]
 
-    sweep_over_N_and_plot(N_vals, v_vals,params)
+    # sweep_over_N_and_plot(N_vals, v_vals,params)
 
 
 end
