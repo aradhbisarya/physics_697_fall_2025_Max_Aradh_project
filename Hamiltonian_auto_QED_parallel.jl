@@ -644,8 +644,11 @@ function plot_entanglement(p::ModelParams, filename)
         zlabel = "Entropy S_vn",
         color = :viridis,   # Gradient colors are much easier to read in 3D
     )
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    outpath = joinpath(subdir, filename * "._entropy.png")
 
-    savefig(plt, filename * "_entropy_interactive.png")
+    savefig(plt, outpath)
     display(plt)
 end
 
@@ -678,19 +681,23 @@ function plot_chiral_condensate(p::ModelParams, filename)
     color = :viridis, # Thermal is good for 0 to 1 intensity
     )
     filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-
-    jldsave(filename * ".jld2"; 
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    outpath = joinpath(subdir, filename * ".jld2")
+    jldsave(outpath; 
     M_condensate = M_condensate,
     M_charge = M_charge
     )
-    savefig(filename * ".png")
+    outpath = joinpath(subdir, filename * ".png")
+    savefig(plot, outpath)
     plot2 = heatmap(mass_vals, theta_vals, M_charge, 
     title = "Chiral Condensate Phase Diagram (charge)",
     xlabel = "Mass Parameter (m)",
     ylabel = "Theta",
     color = :viridis,
     )
-    savefig(filename * "_charge" * ".png")
+    outpath = joinpath(subdir, filename * "_charge" * ".png")
+    savefig(plot2, outpath)
 end
 
 function plot_baryon_number(p::ModelParams, filename)
@@ -723,11 +730,14 @@ function plot_baryon_number(p::ModelParams, filename)
     )
 
     filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-
-    jldsave(filename * "_BaryonNumber.jld2"; 
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    outpath = joinpath(subdir, filename * "_BaryonNumber.jld2")
+    jldsave(outpath; 
     BaryonNumber = BaryonNumber
     )
-    savefig(filename * ".png")
+    outpath = joinpath(subdir, filename * "_BaryonNumber.png")
+    savefig(plot3, outpath)
 end
 
 function phase_diagram_cached(steps, p)
@@ -789,15 +799,19 @@ function phase_diagram_cached(steps, p)
         na_color = :green,
         color = :viridis,
     )
-
-    jldsave(filename * ".jld2"; 
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    outpath = joinpath(subdir, filename * ".jld2")
+    jldsave(outpath; 
     data = data_trimmed, 
     psi = psi,
     sites = sites,
     mass_vals = mass_vals,
     theta_vals = theta_vals
     )
-    savefig(filename * ".png")
+
+    outpath = joinpath(subdir, filename * ".png")
+    savefig(hm, outpath)
 
     return M
 end
@@ -857,10 +871,14 @@ function sweep_over_N_and_plot(N_vals::Vector{Int}, v_vals::Vector{Float64}, bas
     final_plot = plot(p1, p2, p3, p4, layout = (2, 2), size=(1000, 800))
     
     filename = "sweep_N_results"
-    savefig(final_plot, filename * ".png")
+    subdir = "N" *  string(base.N) * "_C" * string(base.C) * "_F" * string(base.F)
+    mkpath(subdir)
+    outpath = joinpath(subdir, filename * ".png")
+    savefig(final_plot, outpath)
     
+    outpath = joinpath(subdir, filename * ".jld2")
     # Save raw data
-    jldsave(filename * ".jld2"; 
+    jldsave(outpath; 
         N_vals=N_vals, 
         v_vals=v_vals, 
         condensate=M_cond, 
