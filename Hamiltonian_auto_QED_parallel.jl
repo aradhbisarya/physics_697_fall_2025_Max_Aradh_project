@@ -4,7 +4,7 @@ using Printf
 using JLD2
 
 if nprocs() == 1
-    addprocs(max(1, Sys.CPU_THREADS - 8))
+    addprocs(max(1, Sys.CPU_THREADS - 23))
     println("Added workers, total processes: $(nprocs())")
 end
 
@@ -14,8 +14,8 @@ end
     using LinearAlgebra
     using ProgressMeter
 
-    BLAS.set_num_threads(3)
-    ITensors.Strided.set_num_threads(3) # Disable block-sparse multithreading
+    BLAS.set_num_threads(4)
+    ITensors.Strided.set_num_threads(4) # Disable block-sparse multithreading
     #ITensors.disable_threaded_blocksparse()
 
     struct ModelParams
@@ -740,7 +740,29 @@ function plot_baryon_number(p::ModelParams, filename)
     savefig(plot3, outpath)
 end
 
-function phase_diagram_cached(steps, p)
+function plot_phase_diagram_fromfile(p::ModelParams, filename)
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    inpath = joinpath(subdir, filename * ".jld2")
+    load_name = inpath
+    data_trimmed, mass_vals, theta_vals = load(load_name, "data", "mass_vals", "theta_vals")
+
+    hm = heatmap(
+        mass_vals,      # X-axis values
+        theta_vals,  # Y-axis values
+        data_trimmed,
+        title = "Phase Diagram (Ground State Energy Gap)",
+        ylabel = "Theta",
+        xlabel = "Mass",
+        na_color = :green,
+        color = :viridis,
+    )
+    outpath = joinpath(subdir, filename * ".png")
+    savefig(hm, outpath)
+
+end
+
+function phase_diagram_cached(steps, p::ModelParams)
     
     # A. INITIALIZE WORKERS
     # =====================
@@ -894,10 +916,11 @@ end
 
 
 let 
-    params = ModelParams(6, 1, 2, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(6, 3, 2, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
-    phase_diagram_cached(100, params)
+    phase_diagram_cached(10, params)
+    # plot_phase_diagram_fromfile(params, filename)
     # plot_entanglement(params, filename)
     # plot_chiral_condensate(params, filename)
     # plot_baryon_number(params, filename)
