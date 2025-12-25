@@ -4,7 +4,7 @@ using Printf
 using JLD2
 
 if nprocs() == 1
-    addprocs(max(1, Sys.CPU_THREADS - 2))
+    addprocs(max(1, Sys.CPU_THREADS - 8))
     println("Added workers, total processes: $(nprocs())")
 end
 
@@ -14,8 +14,8 @@ end
     using LinearAlgebra
     using ProgressMeter
 
-    BLAS.set_num_threads(1)
-    ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
+    BLAS.set_num_threads(3)
+    ITensors.Strided.set_num_threads(3) # Disable block-sparse multithreading
     #ITensors.disable_threaded_blocksparse()
 
     struct ModelParams
@@ -604,7 +604,10 @@ end
 # end
 
 function plot_entanglement(p::ModelParams, filename)
-    load_name = filename * ".JLD2"
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    inpath = joinpath(subdir, filename * ".jld2")
+    load_name = inpath
     @load load_name psi
     site = 0
 
@@ -614,25 +617,16 @@ function plot_entanglement(p::ModelParams, filename)
         i, j = idx.I
         return calc_entanglement(p, psi[i, j])
     end
-    plotlyjs()
-
+    gr()
     all_entropies = Vector{Float64}[] 
-    site_indices = Int[]
-
-    lin_map = LinearIndices(psi)
 
     for (idx, res) in zip(tasks, results)
-        site = lin_map[idx] % (size(psi, 1))
-        if site == 0
-            site = (size(psi, 1))
-        end
         push!(all_entropies, res)
-        push!(site_indices, site)
     end  
 
     z_matrix = reduce(hcat, all_entropies)
     x_axis = 1:size(z_matrix, 1) 
-    y_axis = site_indices
+    y_axis = 1:size(z_matrix, 2)
 
     plt = heatmap(
         x_axis, 
@@ -644,16 +638,22 @@ function plot_entanglement(p::ModelParams, filename)
         zlabel = "Entropy S_vn",
         color = :viridis,   # Gradient colors are much easier to read in 3D
     )
-    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-    mkpath(subdir)
+    filename = "PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
     outpath = joinpath(subdir, filename * "._entropy.png")
 
     savefig(plt, outpath)
+    outpath = joinpath(subdir, filename * "_entropy.jld2")
+    jldsave(outpath; 
+    entropies = z_matrix
+    )
     display(plt)
 end
 
 function plot_chiral_condensate(p::ModelParams, filename)
-    load_name = filename * ".JLD2"
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    inpath = joinpath(subdir, filename * ".jld2")
+    load_name = inpath
     psi, sites, mass_vals, theta_vals = load(load_name, "psi", "sites", "mass_vals", "theta_vals")
     site = 0
 
@@ -681,8 +681,6 @@ function plot_chiral_condensate(p::ModelParams, filename)
     color = :viridis, # Thermal is good for 0 to 1 intensity
     )
     filename = "chiral_condensate_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-    mkpath(subdir)
     outpath = joinpath(subdir, filename * ".jld2")
     jldsave(outpath; 
     M_condensate = M_condensate,
@@ -701,7 +699,10 @@ function plot_chiral_condensate(p::ModelParams, filename)
 end
 
 function plot_baryon_number(p::ModelParams, filename)
-    load_name = filename * ".JLD2"
+    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+    mkpath(subdir)
+    inpath = joinpath(subdir, filename * ".jld2")
+    load_name = inpath
     psi, mass_vals, theta_vals = load(load_name, "psi", "mass_vals", "theta_vals")
     site = 0
 
@@ -729,9 +730,8 @@ function plot_baryon_number(p::ModelParams, filename)
     color = :viridis,
     )
 
-    filename = "energy_gap_PD_N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-    subdir = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
-    mkpath(subdir)
+    filename = "N" *  string(p.N) * "_C" * string(p.C) * "_F" * string(p.F)
+
     outpath = joinpath(subdir, filename * "_BaryonNumber.jld2")
     jldsave(outpath; 
     BaryonNumber = BaryonNumber
@@ -894,13 +894,13 @@ end
 
 
 let 
-    params = ModelParams(6, 2, 2, 1.0, 1.0, 20.0, 0, 1)
+    params = ModelParams(6, 1, 2, 1.0, 1.0, 20.0, 0, 1)
     filename = "energy_gap_PD_N" *  string(params.N) * "_C" * string(params.C) * "_F" * string(params.F)
     # # phase_diagram_mn(16)
-    phase_diagram_cached(10, params)
-    plot_entanglement(params, filename)
-    plot_chiral_condensate(params, filename)
-    plot_baryon_number(params, filename)
+    phase_diagram_cached(100, params)
+    # plot_entanglement(params, filename)
+    # plot_chiral_condensate(params, filename)
+    # plot_baryon_number(params, filename)
     #phase_diagram_condensate(20, params)
     # sites = siteinds("S=1/2", params.N * params.F * params.C, conserve_qns=true)
     # H = construct_hamiltonian(params, sites)
