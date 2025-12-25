@@ -4,7 +4,7 @@ using Printf
 using JLD2
 
 if nprocs() == 1
-    addprocs(max(1, Sys.CPU_THREADS - 23))
+    addprocs(max(1, Sys.CPU_THREADS - 2))
     println("Added workers, total processes: $(nprocs())")
 end
 
@@ -14,8 +14,8 @@ end
     using LinearAlgebra
     using ProgressMeter
 
-    BLAS.set_num_threads(4)
-    ITensors.Strided.set_num_threads(4) # Disable block-sparse multithreading
+    BLAS.set_num_threads(1)
+    ITensors.Strided.set_num_threads(1) # Disable block-sparse multithreading
     #ITensors.disable_threaded_blocksparse()
 
     struct ModelParams
